@@ -45,12 +45,12 @@ private:
     const char *m_title;
     bool m_initialized;
 
-    Grid m_grid;
-    Simulation m_sim;
-    GridRenderer m_gridRenderer;
-    GridRenderMode m_gridRenderMode;
-    Camera m_camera;
-    Shader *m_shader;
+    // Grid m_grid;
+    // Simulation m_sim;
+    // GridRenderer m_gridRenderer;
+    // GridRenderMode m_gridRenderMode;
+    // Camera m_camera;
+    // Shader *m_shader;
 
     float m_forward;
     float m_sideways;

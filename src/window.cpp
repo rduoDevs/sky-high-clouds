@@ -43,12 +43,12 @@ Window::Window(int width, int height, const char *title)
       m_height(height),
       m_title(title),
       m_initialized(false),
-      m_grid(16, 16, 16, 0.1f),
-      m_sim(m_grid),
-      m_gridRenderer(),
-      m_gridRenderMode(GridRenderMode::VELOC),
-      m_camera(),
-      m_shader(nullptr),
+      //m_grid(16, 16, 16, 0.1f),
+      ////m_sim(m_grid),
+     // m_gridRenderer(),
+     // m_gridRenderMode(GridRenderMode::VELOC),
+      //m_camera(),
+      //(nullptr),
       m_forward(0.0f),
       m_sideways(0.0f),
       m_vertical(0.0f),
@@ -141,16 +141,16 @@ bool Window::init()
 
     const std::string vertexPath = resolveResourcePath("resources/shaders/shader.vert");
     const std::string fragmentPath = resolveResourcePath("resources/shaders/shader.frag");
-    m_shader = new Shader(vertexPath, fragmentPath);
+    // m_shader = new Shader(vertexPath, fragmentPath);
 
-    m_sim.init();
-    m_gridRenderer.init();
+    // m_sim.init();
+    // m_gridRenderer.init();
 
-    Eigen::Vector3f eye(0.f, 2.f, -5.f);
-    Eigen::Vector3f target(0.f, 1.f, 0.f);
-    m_camera.lookAt(eye, target);
-    m_camera.setOrbitPoint(target);
-    m_camera.setPerspective(120, m_width / static_cast<float>(m_height), 0.1f, 50.f);
+    // Eigen::Vector3f eye(0.f, 2.f, -5.f);
+    // Eigen::Vector3f target(0.f, 1.f, 0.f);
+    // m_camera.lookAt(eye, target);
+    // m_camera.setOrbitPoint(target);
+    // m_camera.setPerspective(120, m_width / static_cast<float>(m_height), 0.1f, 50.f);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -182,10 +182,10 @@ void Window::shutdown()
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 
-    if (m_shader) {
-        delete m_shader;
-        m_shader = nullptr;
-    }
+    // if (m_shader) {
+    //     delete m_shader;
+    //     m_shader = nullptr;
+    // }
 
     if (m_window) {
         glfwDestroyWindow(m_window);
@@ -204,9 +204,9 @@ void Window::renderFrame(float deltaSeconds)
 
     renderUi();
 
-    if (!m_paused) {
-        m_sim.update(deltaSeconds);
-    }
+    // if (!m_paused) {
+    //     m_sim.update(deltaSeconds);
+    // }
 
     updateCamera(deltaSeconds);
     renderScene();
@@ -219,30 +219,30 @@ void Window::renderScene()
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    m_shader->bind();
-    m_shader->setUniform("proj", m_camera.getProjection());
-    m_shader->setUniform("view", m_camera.getView());
-    m_gridRenderer.draw(m_shader, m_grid, m_gridRenderMode);
-    if (m_velocityOverlay && m_gridRenderMode != GridRenderMode::VELOC) {
-        m_gridRenderer.draw(m_shader, m_grid, GridRenderMode::VELOC);
-    }
-    if (m_showParticles) {
-        m_gridRenderer.drawParticles(m_shader, m_grid, m_sim.particles());
-    }
-    m_shader->unbind();
+    // m_shader->bind();
+    // m_shader->setUniform("proj", m_camera.getProjection());
+    // m_shader->setUniform("view", m_camera.getView());
+    // m_gridRenderer.draw(m_shader, m_grid, m_gridRenderMode);
+    // if (m_velocityOverlay && m_gridRenderMode != GridRenderMode::VELOC) {
+    //     m_gridRenderer.draw(m_shader, m_grid, GridRenderMode::VELOC);
+    // }
+    // if (m_showParticles) {
+    //     m_gridRenderer.drawParticles(m_shader, m_grid, m_sim.particles());
+    // }
+    // m_shader->unbind();
 }
 
 void Window::updateCamera(float deltaSeconds)
 {
-    auto look = m_camera.getLook();
-    look.y() = 0.f;
-    look.normalize();
-    Eigen::Vector3f perp(-look.z(), 0.f, look.x());
-    Eigen::Vector3f moveVec = m_forward * look.normalized()
-                              + m_sideways * perp.normalized()
-                              + m_vertical * Eigen::Vector3f::UnitY();
-    moveVec *= deltaSeconds;
-    m_camera.move(moveVec);
+    // auto look = m_camera.getLook();
+    // look.y() = 0.f;
+    // look.normalize();
+    // Eigen::Vector3f perp(-look.z(), 0.f, look.x());
+    // Eigen::Vector3f moveVec = m_forward * look.normalized()
+    //                           + m_sideways * perp.normalized()
+    //                           + m_vertical * Eigen::Vector3f::UnitY();
+    // moveVec *= deltaSeconds;
+    // m_camera.move(moveVec);
 }
 
 void Window::renderUi()
@@ -251,74 +251,73 @@ void Window::renderUi()
 
     ImGui::Begin("Simulation");
     ImGui::Text("FPS: %.1f", io.Framerate);
-    ImGui::Checkbox("Paused", &m_paused);
-    if (ImGui::Button("Reset Grid")) {
-        m_sim.resetGridToInitial();
-    }
-    if (ImGui::Button("Toggle Orbit")) {
-        m_camera.toggleIsOrbiting();
-    }
+    ImGui::Checkbox("Pause Simulation", &m_paused);
+    ImGui::Button("Take a Screenshot!");
+    // if (ImGui::Button("Reset Grid")) {
+    //     //m_sim.resetGridToInitial();
+    // }
+    // if (ImGui::Button("Toggle Orbit")) {
+    //    // m_camera.toggleIsOrbiting();
+    // }
 
     ImGui::Separator();
     int mode = 0;
-    switch (m_gridRenderMode) {
-    case GridRenderMode::GRID_CENTER: mode = 0; break;
-    case GridRenderMode::VELOC: mode = 1; break;
-    case GridRenderMode::DENSITY: mode = 2; break;
-    case GridRenderMode::PRESSURE: mode = 3; break;
-    }
-    ImGui::Text("Render Mode");
-    ImGui::RadioButton("Grid Centers", &mode, 0);
-    ImGui::RadioButton("Velocity", &mode, 1);
-    ImGui::RadioButton("DEBUG: Density", &mode, 2);
-    ImGui::RadioButton("DEBUG: Pressure", &mode, 3);
-    switch (mode) {
-    case 0: m_gridRenderMode = GridRenderMode::GRID_CENTER; break;
-    case 1: m_gridRenderMode = GridRenderMode::VELOC; break;
-    case 2: m_gridRenderMode = GridRenderMode::DENSITY; break;
-    case 3: m_gridRenderMode = GridRenderMode::PRESSURE; break;
-    default: break;
-    }
+    // switch (m_gridRenderMode) {
+    // case GridRenderMode::GRID_CENTER: mode = 0; break;
+    // case GridRenderMode::VELOC: mode = 1; break;
+    // case GridRenderMode::DENSITY: mode = 2; break;
+    // case GridRenderMode::PRESSURE: mode = 3; break;
+    // }
+    ImGui::Text("Noise Selection");
+    ImGui::RadioButton("Perlin", &mode, 0);
+    ImGui::RadioButton("Worley", &mode, 1);
+    ImGui::RadioButton("Hybrid", &mode, 2);
+    // switch (mode) {
+    // case 0: m_gridRenderMode = GridRenderMode::GRID_CENTER; break;
+    // case 1: m_gridRenderMode = GridRenderMode::VELOC; break;
+    // case 2: m_gridRenderMode = GridRenderMode::DENSITY; break;
+    // case 3: m_gridRenderMode = GridRenderMode::PRESSURE; break;
+    // default: break;
+    // }
 
 
     ImGui::Separator();
-    ImGui::Text("Particle Settings");
-    ImGui::Checkbox("Show Particles", &m_showParticles);
-    ImGui::Checkbox("Overlay Velocity", &m_velocityOverlay);
+    ImGui::Text("Mesh");
+    ImGui::Button("Upload Cloud Mesh");
 
-    int particleCount = m_sim.particleCount();
-    if (ImGui::SliderInt("Particle Count", &particleCount, 200, 10000)) {
-        m_sim.setParticleCount(particleCount);
-    }
+    // int particleCount = 200; //m_sim.particleCount();
+    // if (ImGui::SliderInt("Particle Count", &particleCount, 200, 10000)) {
+    //   //  m_sim.setParticleCount(particleCount);
+    // }
 
-    int spawnMode = static_cast<int>(m_sim.particleSpawnMode());
-    ImGui::Text("Spawn Mode");
-    ImGui::RadioButton("Sphere Volume", &spawnMode, 3);
-    if (spawnMode != static_cast<int>(m_sim.particleSpawnMode())) {
-        m_sim.setParticleSpawnMode(static_cast<ParticleSpawnMode>(spawnMode));
-    }
-    if (m_sim.particleSpawnMode() == ParticleSpawnMode::SPHERE_VOLUME) {
-        float radius = m_sim.particleSpawnSphereRadius();
-        const float maxRadius = 0.5f * std::min(m_grid.nx * m_grid.cellSize,
-                                                std::min(m_grid.ny * m_grid.cellSize,
-                                                         m_grid.nz * m_grid.cellSize));
-        if (ImGui::SliderFloat("Sphere Radius", &radius, 0.0f, maxRadius)) {
-            m_sim.setParticleSpawnSphereRadius(radius);
-        }
-    }
-    ImGui::RadioButton("Vortex Ring", &spawnMode, 0);
-    ImGui::RadioButton("Cell Centers", &spawnMode, 1);
-    ImGui::RadioButton("Random In Cell", &spawnMode, 2);
+    // int spawnMode = 1; //static_cast<int>(m_sim.particleSpawnMode());
+    // ImGui::Text("Spawn Mode");
+    // ImGui::RadioButton("Sphere Volume", &spawnMode, 3);
+    // if (spawnMode != 1 ){//static_cast<int>(m_sim.particleSpawnMode())) {
+    //  //   m_sim.setParticleSpawnMode(static_cast<ParticleSpawnMode>(spawnMode));
+    // }
+    // // if (m_sim.particleSpawnMode() == ParticleSpawnMode::SPHERE_VOLUME) {
+    // //     float radius = m_sim.particleSpawnSphereRadius();
+    // //     const float maxRadius = 0.5f * std::min(m_grid.nx * m_grid.cellSize,
+    // //                                             std::min(m_grid.ny * m_grid.cellSize,
+    // //                                                      m_grid.nz * m_grid.cellSize));
+    // //     if (ImGui::SliderFloat("Sphere Radius", &radius, 0.0f, maxRadius)) {
+    // //         m_sim.setParticleSpawnSphereRadius(radius);
+    // //     }
+    // // }
+    // ImGui::RadioButton("Vortex Ring", &spawnMode, 0);
+    // ImGui::RadioButton("Cell Centers", &spawnMode, 1);
+    // ImGui::RadioButton("Random In Cell", &spawnMode, 2);
 
     ImGui::Separator();
-    ImGui::Text("Controls");
-    ImGui::Text("WASD + R/F: move");
-    ImGui::Text("Mouse drag: orbit");
-    ImGui::Text("Scroll: zoom");
-    ImGui::Text("1/2/3/4: render mode");
-    ImGui::Text("Space: respawn particles");
-    ImGui::Text("O: reset grid");
-    ImGui::Text("P: pause");
+    ImGui::Text("Renderer: WebGPU");
+    // ImGui::Text("WASD + R/F: move");
+    // ImGui::Text("Mouse drag: orbit");
+    // ImGui::Text("Scroll: zoom");
+    // ImGui::Text("1/2/3/4: render mode");
+    // ImGui::Text("Space: respawn particles");
+    // ImGui::Text("O: reset grid");
+    // ImGui::Text("P: pause");
     ImGui::Separator();
     ImGui::End();
 }
@@ -332,7 +331,7 @@ void Window::handleResize(int width, int height)
     m_width = width;
     m_height = height;
     glViewport(0, 0, width, height);
-    m_camera.setAspect(static_cast<float>(width) / static_cast<float>(height));
+   // m_camera.setAspect(static_cast<float>(width) / static_cast<float>(height));
 }
 
 void Window::onKey(int key, int action)
@@ -342,63 +341,63 @@ void Window::onKey(int key, int action)
         return;
     }
 
-    Eigen::Vector3f impulsePoint(0.5f * m_grid.nx * m_grid.cellSize,0.3f * m_grid.ny * m_grid.cellSize,0.5f * m_grid.nz * m_grid.cellSize);
-    if (action == GLFW_PRESS) {
-        switch (key) {
-        case GLFW_KEY_J: {
-            Eigen::Vector3f force = Eigen::Vector3f(0.f,1.f,0.f);
-            m_sim.impulse(impulsePoint, force);
-            break;
-        }
-        case GLFW_KEY_Y: {
-            m_sim.m_isCounting = true;
-            m_sim.m_count = 0;
-            break;
-        }
-        case GLFW_KEY_K: {
-            Eigen::Vector3f force = Eigen::Vector3f(1.f,1.f,1.f);
-            m_sim.impulse(impulsePoint, force);
-            break;
-        }
-        case GLFW_KEY_L: {
-            Eigen::Vector3f force = Eigen::Vector3f(-1.f,-1.f,-1.f);
-            m_sim.impulse(impulsePoint, force);
-            break;
-        }
-        case GLFW_KEY_I: {
-            Eigen::Vector3f force = Eigen::Vector3f(0.f,-1.f,0.f);
-            m_sim.impulse(impulsePoint, force);
-            break;
-        }
+    // Eigen::Vector3f impulsePoint(0.5f * m_grid.nx * m_grid.cellSize,0.3f * m_grid.ny * m_grid.cellSize,0.5f * m_grid.nz * m_grid.cellSize);
+    // if (action == GLFW_PRESS) {
+    //     switch (key) {
+    //     case GLFW_KEY_J: {
+    //         Eigen::Vector3f force = Eigen::Vector3f(0.f,1.f,0.f);
+    //         m_sim.impulse(impulsePoint, force);
+    //         break;
+    //     }
+    //     case GLFW_KEY_Y: {
+    //         m_sim.m_isCounting = true;
+    //         m_sim.m_count = 0;
+    //         break;
+    //     }
+    //     case GLFW_KEY_K: {
+    //         Eigen::Vector3f force = Eigen::Vector3f(1.f,1.f,1.f);
+    //         m_sim.impulse(impulsePoint, force);
+    //         break;
+    //     }
+    //     case GLFW_KEY_L: {
+    //         Eigen::Vector3f force = Eigen::Vector3f(-1.f,-1.f,-1.f);
+    //         m_sim.impulse(impulsePoint, force);
+    //         break;
+    //     }
+    //     case GLFW_KEY_I: {
+    //         Eigen::Vector3f force = Eigen::Vector3f(0.f,-1.f,0.f);
+    //         m_sim.impulse(impulsePoint, force);
+    //         break;
+    //     }
 
-        case GLFW_KEY_P: m_paused = !m_paused; break;
-        case GLFW_KEY_W: m_forward += kSpeed; break;
-        case GLFW_KEY_S: m_forward -= kSpeed; break;
-        case GLFW_KEY_A: m_sideways -= kSpeed; break;
-        case GLFW_KEY_D: m_sideways += kSpeed; break;
-        case GLFW_KEY_F: m_vertical -= kSpeed; break;
-        case GLFW_KEY_R: m_vertical += kSpeed; break;
-        case GLFW_KEY_1: m_gridRenderMode = GridRenderMode::GRID_CENTER; break;
-        case GLFW_KEY_2: m_gridRenderMode = GridRenderMode::VELOC; break;
-        case GLFW_KEY_3: m_gridRenderMode = GridRenderMode::DENSITY; break;
-        case GLFW_KEY_4: m_gridRenderMode = GridRenderMode::PRESSURE; break;
-        case GLFW_KEY_SPACE: m_sim.resetParticles(); break;
-        case GLFW_KEY_O: m_sim.resetGridToInitial(); break;
-        case GLFW_KEY_C: m_camera.toggleIsOrbiting(); break;
-        case GLFW_KEY_ESCAPE: glfwSetWindowShouldClose(m_window, GLFW_TRUE); break;
-        default: break;
-        }
-    } else if (action == GLFW_RELEASE) {
-        switch (key) {
-        case GLFW_KEY_W: m_forward -= kSpeed; break;
-        case GLFW_KEY_S: m_forward += kSpeed; break;
-        case GLFW_KEY_A: m_sideways += kSpeed; break;
-        case GLFW_KEY_D: m_sideways -= kSpeed; break;
-        case GLFW_KEY_F: m_vertical += kSpeed; break;
-        case GLFW_KEY_R: m_vertical -= kSpeed; break;
-        default: break;
-        }
-    }
+        // case GLFW_KEY_P: m_paused = !m_paused; break;
+        // case GLFW_KEY_W: m_forward += kSpeed; break;
+        // case GLFW_KEY_S: m_forward -= kSpeed; break;
+        // case GLFW_KEY_A: m_sideways -= kSpeed; break;
+        // case GLFW_KEY_D: m_sideways += kSpeed; break;
+        // case GLFW_KEY_F: m_vertical -= kSpeed; break;
+        // case GLFW_KEY_R: m_vertical += kSpeed; break;
+        // case GLFW_KEY_1: m_gridRenderMode = GridRenderMode::GRID_CENTER; break;
+        // case GLFW_KEY_2: m_gridRenderMode = GridRenderMode::VELOC; break;
+        // case GLFW_KEY_3: m_gridRenderMode = GridRenderMode::DENSITY; break;
+        // case GLFW_KEY_4: m_gridRenderMode = GridRenderMode::PRESSURE; break;
+        // case GLFW_KEY_SPACE: m_sim.resetParticles(); break;
+        // case GLFW_KEY_O: m_sim.resetGridToInitial(); break;
+        // case GLFW_KEY_C: m_camera.toggleIsOrbiting(); break;
+        // case GLFW_KEY_ESCAPE: glfwSetWindowShouldClose(m_window, GLFW_TRUE); break;
+        //default: break;
+        //}
+    // } else if (action == GLFW_RELEASE) {
+    //     switch (key) {
+    //     case GLFW_KEY_W: m_forward -= kSpeed; break;
+    //     case GLFW_KEY_S: m_forward += kSpeed; break;
+    //     case GLFW_KEY_A: m_sideways += kSpeed; break;
+    //     case GLFW_KEY_D: m_sideways -= kSpeed; break;
+    //     case GLFW_KEY_F: m_vertical += kSpeed; break;
+    //     case GLFW_KEY_R: m_vertical -= kSpeed; break;
+    //     default: break;
+    //     }
+    // }
 }
 
 void Window::onMouseButton(int button, int action)
@@ -432,8 +431,8 @@ void Window::onCursorPos(double xpos, double ypos)
         return;
     }
 
-    m_camera.rotate(static_cast<float>(deltaY) * kRotateSpeed,
-                    static_cast<float>(-deltaX) * kRotateSpeed);
+    // m_camera.rotate(static_cast<float>(deltaY) * kRotateSpeed,
+    //                 static_cast<float>(-deltaX) * kRotateSpeed);
 
     m_lastX = xpos;
     m_lastY = ypos;
@@ -447,7 +446,7 @@ void Window::onScroll(double yoffset)
     }
 
     float zoom = 1.f - static_cast<float>(yoffset) * 0.1f;
-    m_camera.zoom(zoom);
+    //m_camera.zoom(zoom);
 }
 
 void Window::onChar(unsigned int codepoint)

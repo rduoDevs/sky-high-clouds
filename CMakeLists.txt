@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 # Sets project name
-project(fluidsim LANGUAGES CXX C)
+project(skyhighclouds LANGUAGES CXX C)
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
@@ -46,23 +46,23 @@ include_directories(libs)
 # Specifies .cpp and .h files to be passed to the compiler
 add_executable(${PROJECT_NAME}
     src/main.cpp
-    src/grid.cpp
-    src/simulation.cpp
-    src/gridrenderer.cpp
-    src/graphics/camera.cpp
-    src/graphics/graphicsdebug.cpp
-    src/graphics/shader.cpp
-    src/graphics/shape.cpp
+    # src/grid.cpp
+    # src/simulation.cpp
+    # src/gridrenderer.cpp
+    # src/graphics/camera.cpp
+    # src/graphics/graphicsdebug.cpp
+    # src/graphics/shader.cpp
+    # src/graphics/shape.cpp
 
-    src/grid.h
-    src/simulation.h
-    src/gridrenderer.h
+    # src/grid.h
+    # src/simulation.h
+    # src/gridrenderer.h
     src/window.cpp
     src/window.h
-    src/graphics/camera.h
-    src/graphics/graphicsdebug.h
-    src/graphics/shader.h
-    src/graphics/shape.h
+    # src/graphics/camera.h
+    # src/graphics/graphicsdebug.h
+    # src/graphics/shader.h
+    # src/graphics/shape.h
 
     util/tiny_obj_loader.h
     util/unsupportedeigenthing/OpenGLSupport
