@@ -106,34 +106,5 @@ class Application {
     uint32_t m_textureWidth = 0;
     uint32_t m_textureHeight = 0;
 
-    // Values exposed to the UI
-    enum class FilterType {
-        Sum,
-        Maximum,
-        Minimum,
-    };
-    struct Parameters {
-        FilterType filterType = FilterType::Sum;
-        glm::mat3x4 kernel = glm::mat3x4(1.0);
-        bool normalize = true;
-    };
-    Parameters m_parameters;
-
-    // Computed from the Parameters
-    struct Uniforms {
-        glm::mat3x4 kernel = glm::mat3x4(0.0);
-        float test = 0.5f;
-        uint32_t filterType = 0;
-        float _pad[2];
-    };
-    static_assert(sizeof(Uniforms) % 16 == 0);
-    Uniforms m_uniforms;
-
-    // Similar to parameters, but do not trigger recomputation of the effect
-    struct Settings {
-        float scale = 0.5f;
-    };
-    Settings m_settings;
-
     uint32_t m_frameCount = 0;
 };
