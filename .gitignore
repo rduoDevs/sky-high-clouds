@@ -188,3 +188,5 @@ Thumbs.db
 !meshes/*.obj
 
 build/
+
+!dawn_precompiled_windows/bin/webgpu_dawn.dll

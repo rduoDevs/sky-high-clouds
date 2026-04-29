@@ -26,16 +26,16 @@ class Application {
     // Where the GPU computation is actually issued
     void onCompute();
 
-    // A function that tells if the compute pass should be executed
-    // (i.e., when filter parameters changed)
-    bool shouldCompute();
-
    public:
     // A function called when we should draw the GUI.
     void onGui(wgpu::RenderPassEncoder renderPass);
 
     // A function called when the window is resized.
     void onResize();
+
+    // Input callbacks (public wrappers for GLFW callbacks)
+    void HandleKeyCallback(int key, int action);
+    void HandleMouseCallback(double xpos, double ypos);
 
    private:
     // Detailed steps
@@ -94,7 +94,6 @@ class Application {
     // std::unique_ptr<wgpu::ErrorCallback> m_uncapturedErrorCallback;
     // std::unique_ptr<wgpu::DeviceLostCallback> m_deviceLostCallback;
 
-    bool m_shouldCompute = true;
     wgpu::Buffer m_uniformBuffer = nullptr;
     wgpu::Buffer m_worldBuffer = nullptr;
     wgpu::Buffer m_settingsBuffer = nullptr;
@@ -107,4 +106,19 @@ class Application {
     uint32_t m_textureHeight = 0;
 
     uint32_t m_frameCount = 0;
+
+    // Input tracking
+    bool m_mouseCaptured = false;
+    double m_lastMouseX = 0.0;
+    double m_lastMouseY = 0.0;
+    bool m_keys[GLFW_KEY_LAST + 1] = {};  // GLFW key state tracking
+    CameraData m_cameraData;
+    float m_moveSpeed = 1.0f;
+    float m_rotateSpeed = 0.002f;
+    double m_lastFrameTime = 0.0;
+    bool m_cameraDataUpdated = false;
+
+    // Input handling
+    void handleKeyInput(float deltaTime);
+    void toggleMouseCapture();
 };

@@ -7,10 +7,7 @@ int main(int, char**) {
 
     while (app.isRunning()) {
         app.onFrame();
-
-        if (app.shouldCompute()) {
-            app.onCompute();
-        }
+        app.onCompute();
     }
 
     app.onFinish();

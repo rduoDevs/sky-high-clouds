@@ -44,6 +44,28 @@ void onWindowResize(GLFWwindow* window, int width, int height) {
         pApp->onResize();
 }
 
+void onKeyCallback(GLFWwindow* window,
+                   int key,
+                   int scancode,
+                   int action,
+                   int mods) {
+    (void)scancode;
+    (void)mods;
+    auto pApp =
+        reinterpret_cast<Application*>(glfwGetWindowUserPointer(window));
+    if (pApp != nullptr) {
+        pApp->HandleKeyCallback(key, action);
+    }
+}
+
+void onMouseCallback(GLFWwindow* window, double xpos, double ypos) {
+    auto pApp =
+        reinterpret_cast<Application*>(glfwGetWindowUserPointer(window));
+    if (pApp != nullptr) {
+        pApp->HandleMouseCallback(xpos, ypos);
+    }
+}
+
 void OnDeviceError(const wgpu::Device& device,
                    wgpu::ErrorType type,
                    wgpu::StringView message) {
@@ -85,10 +107,6 @@ void Application::onFinish() {
 
 bool Application::isRunning() {
     return !glfwWindowShouldClose(m_window);
-}
-
-bool Application::shouldCompute() {
-    return m_shouldCompute;
 }
 
 bool Application::initDevice() {
@@ -214,6 +232,8 @@ bool Application::initWindow() {
     // Add window callbacks
     glfwSetWindowUserPointer(m_window, this);
     glfwSetFramebufferSizeCallback(m_window, onWindowResize);
+    glfwSetKeyCallback(m_window, onKeyCallback);
+    glfwSetCursorPosCallback(m_window, onMouseCallback);
     return true;
 }
 
@@ -453,6 +473,17 @@ void Application::terminatePresentPipeline() {
 void Application::onFrame() {
     glfwPollEvents();
 
+    // Calculate delta time
+    double currentTime = glfwGetTime();
+    if (m_lastFrameTime == 0.0) {
+        m_lastFrameTime = currentTime;
+    }
+    float deltaTime = static_cast<float>(currentTime - m_lastFrameTime);
+    m_lastFrameTime = currentTime;
+
+    // Handle input
+    handleKeyInput(deltaTime);
+
     // Get current surface texture
     wgpu::SurfaceTexture surfaceTexture;
     m_surface.GetCurrentTexture(&surfaceTexture);
@@ -535,8 +566,6 @@ void Application::onGui(RenderPassEncoder renderPass) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    m_shouldCompute = true;
-
     ImGui::Begin("Settings");
     ImGuiIO& io = ImGui::GetIO();
     const float fps = io.Framerate;
@@ -561,6 +590,12 @@ void Application::onCompute() {
 
     FrameCountData frameData = {m_frameCount, {0, 0, 0}};
     m_queue.WriteBuffer(m_frameCountBuffer, 0, &frameData, sizeof(frameData));
+
+    if (m_cameraDataUpdated) {
+        m_queue.WriteBuffer(m_uniformBuffer, 0, &m_cameraData,
+                            sizeof(m_cameraData));
+        m_cameraDataUpdated = false;
+    }
 
     // Initialize a command encoder
     wgpu::CommandEncoderDescriptor encoderDesc{};
@@ -593,7 +628,6 @@ void Application::onCompute() {
     m_queue.Submit(1, &commands);
 
     ++m_frameCount;
-    m_shouldCompute = true;
 }
 
 void Application::onResize() {
@@ -608,5 +642,4 @@ void Application::onResize() {
     initPresentBindGroup();
 
     m_frameCount = 0;
-    m_shouldCompute = true;
 }

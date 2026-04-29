@@ -142,13 +142,13 @@ fn createRay(uv : vec2<f32>, size : vec2<f32>) -> Ray {
     // Rotate by yaw (around Y axis)
     let cosYaw = cos(yaw);
     let sinYaw = sin(yaw);
-    dir = vec3<f32>(
-        dir.x * cosYaw + dir.z * sinYaw,
+    dir = normalize(vec3<f32>(
+        dir.x * cosYaw - dir.z * sinYaw,
         dir.y,
-        -dir.x * sinYaw + dir.z * cosYaw
-    );
+        dir.x * sinYaw + dir.z * cosYaw
+    ));
     
-    return Ray(camera.position, normalize(dir));
+    return Ray(camera.position, dir);
 }
 
 fn intersectSphere(ray : Ray, sphere : Sphere) -> Intersection {

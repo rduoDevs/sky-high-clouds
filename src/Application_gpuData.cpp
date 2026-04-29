@@ -1,5 +1,6 @@
-#include "gpuData.h"
+#include <iostream>
 #include "Application.h"
+#include "gpuData.h"
 
 void Application::initBuffers() {
     wgpu::BufferDescriptor desc{};
@@ -25,7 +26,7 @@ void Application::initBuffers() {
     desc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::Uniform;
     m_frameCountBuffer = m_device.CreateBuffer(&desc);
 
-    const CameraData camera = {
+    m_cameraData = {
         .position = glm::vec3(0.0f, 0.0f, 3.5f),
         ._pad0 = 0.0f,
         .rotation = glm::vec3(0.0f, 0.0f, 0.0f),
@@ -58,7 +59,8 @@ void Application::initBuffers() {
 
     const FrameCountData frameData = {.frameCount = 0, ._pad = {0, 0, 0}};
 
-    m_queue.WriteBuffer(m_uniformBuffer, 0, &camera, sizeof(camera));
+    m_queue.WriteBuffer(m_uniformBuffer, 0, &m_cameraData,
+                        sizeof(m_cameraData));
     m_queue.WriteBuffer(m_worldBuffer, 0, &world, sizeof(world));
     m_queue.WriteBuffer(m_settingsBuffer, 0, &raySettings, sizeof(raySettings));
     m_queue.WriteBuffer(m_frameCountBuffer, 0, &frameData, sizeof(frameData));
@@ -130,4 +132,81 @@ void Application::initBindGroupLayout() {
     bindGroupLayoutDesc.entryCount = (uint32_t)bindings.size();
     bindGroupLayoutDesc.entries = bindings.data();
     m_bindGroupLayout = m_device.CreateBindGroupLayout(&bindGroupLayoutDesc);
+}
+
+void Application::handleKeyInput(float deltaTime) {
+    glm::vec3 movement(0.0f);
+
+    // WASD movement in camera space
+    if (m_keys[GLFW_KEY_W])
+        movement.z -= 1.0f;
+    if (m_keys[GLFW_KEY_S])
+        movement.z += 1.0f;
+    if (m_keys[GLFW_KEY_A])
+        movement.x -= 1.0f;
+    if (m_keys[GLFW_KEY_D])
+        movement.x += 1.0f;
+    if (m_keys[GLFW_KEY_SPACE] || m_keys[GLFW_KEY_E])
+        movement.y += 1.0f;
+    if (m_keys[GLFW_KEY_LEFT_SHIFT] || m_keys[GLFW_KEY_Q])
+        movement.y -= 1.0f;
+
+    if (glm::length(movement) > 0.0f) {
+        movement = glm::normalize(movement);
+
+        // Create rotation matrix from camera rotation
+        float cosY = glm::cos(m_cameraData.rotation.y);
+        float sinY = glm::sin(m_cameraData.rotation.y);
+
+        // Transform movement based on camera rotation (yaw only for now)
+        float movedX = movement.x * cosY - movement.z * sinY;
+        float movedZ = movement.x * sinY + movement.z * cosY;
+
+        m_cameraData.position.x += movedX * m_moveSpeed * deltaTime;
+        m_cameraData.position.z += movedZ * m_moveSpeed * deltaTime;
+        m_cameraData.position.y += movement.y * m_moveSpeed * deltaTime;
+
+        m_cameraDataUpdated = true;
+    }
+}
+
+void Application::toggleMouseCapture() {
+    m_mouseCaptured = !m_mouseCaptured;
+    std::cout << "Mouse capture " << (m_mouseCaptured ? "enabled" : "disabled")
+              << std::endl;
+
+    if (m_mouseCaptured) {
+        glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    } else {
+        glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    }
+}
+
+void Application::HandleKeyCallback(int key, int action) {
+    if (key >= 0 && key <= GLFW_KEY_LAST) {
+        m_keys[key] = (action != GLFW_RELEASE);
+
+        // Handle Escape key for mouse capture toggle
+        if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+            toggleMouseCapture();
+        }
+    }
+}
+
+void Application::HandleMouseCallback(double xpos, double ypos) {
+    if (m_mouseCaptured) {
+        double deltaX = xpos - m_lastMouseX;
+        double deltaY = ypos - m_lastMouseY;
+
+        // Update camera rotation based on mouse movement
+        // y is yaw (looking left/right), x is pitch (looking up/down)
+        m_cameraData.rotation.y += static_cast<float>(deltaX) * m_rotateSpeed;
+        m_cameraData.rotation.x -= static_cast<float>(deltaY) * m_rotateSpeed;
+        m_cameraDataUpdated = true;
+        std::cout << "Camera rotation: (" << m_cameraData.rotation.x << ", "
+                  << m_cameraData.rotation.y << ", " << m_cameraData.rotation.z
+                  << ")" << std::endl;
+    }
+    m_lastMouseX = xpos;
+    m_lastMouseY = ypos;
 }
