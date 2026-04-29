@@ -189,4 +189,4 @@ Thumbs.db
 
 build/
 
-!dawn_precompiled_windows/bin/webgpu_dawn.dll
+!dawn_precompiled_windows/**

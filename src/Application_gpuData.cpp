@@ -203,9 +203,6 @@ void Application::HandleMouseCallback(double xpos, double ypos) {
         m_cameraData.rotation.y += static_cast<float>(deltaX) * m_rotateSpeed;
         m_cameraData.rotation.x -= static_cast<float>(deltaY) * m_rotateSpeed;
         m_cameraDataUpdated = true;
-        std::cout << "Camera rotation: (" << m_cameraData.rotation.x << ", "
-                  << m_cameraData.rotation.y << ", " << m_cameraData.rotation.z
-                  << ")" << std::endl;
     }
     m_lastMouseX = xpos;
     m_lastMouseY = ypos;
