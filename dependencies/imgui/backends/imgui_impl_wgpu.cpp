@@ -912,7 +912,7 @@ const char* ImGui_ImplWGPU_GetDeviceLostReasonName(WGPUDeviceLostReason type)
     {
     case WGPUDeviceLostReason_Unknown: return "Unknown";
     case WGPUDeviceLostReason_Destroyed: return "Destroyed";
-    case WGPUDeviceLostReason_CallbackCancelled: return "CallbackCancelled";
+    // case WGPUDeviceLostReason_CallbackCancelled: return "CallbackCancelled";
     case WGPUDeviceLostReason_FailedCreation: return "FailedCreation";
     default: return "Unknown";
     }

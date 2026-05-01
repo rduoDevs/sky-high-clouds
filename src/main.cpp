@@ -1,7 +1,15 @@
-#include "window.h"
 
-int main()
-{
-    Window window(800, 600, "Sky High Clouds | Real-Time Renderer");
-    return window.run();
+#include "Application.h"
+
+int main(int, char**) {
+    Application app;
+    app.onInit();
+
+    while (app.isRunning()) {
+        app.onCompute();
+        app.onFrame();
+    }
+
+    app.onFinish();
+    return 0;
 }
