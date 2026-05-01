@@ -121,4 +121,10 @@ class Application {
     // Input handling
     void handleKeyInput(float deltaTime);
     void toggleMouseCapture();
+
+    wgpu::Buffer m_triangleBuffer;
+    uint32_t   m_triangleCount = 0;
+    wgpu::Buffer m_cloudMeshBuffer;
+    void loadCloudMesh();
 };
+

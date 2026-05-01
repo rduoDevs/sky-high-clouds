@@ -6,8 +6,8 @@ int main(int, char**) {
     app.onInit();
 
     while (app.isRunning()) {
-        app.onFrame();
         app.onCompute();
+        app.onFrame();
     }
 
     app.onFinish();

@@ -82,6 +82,7 @@ bool Application::onInit() {
     initSwapChain();
     initGui();
     initBuffers();
+    loadCloudMesh();
     initTextures();
     initTextureViews();
     initBindGroupLayout();
@@ -218,7 +219,7 @@ bool Application::initWindow() {
     // Create window
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    m_window = glfwCreateWindow(640, 480, "Learn WebGPU", NULL, NULL);
+    m_window = glfwCreateWindow(640, 480, "Sky High Clouds | Physically-Accurate Clouds", NULL, NULL);
     if (!m_window) {
         std::cerr << "Could not open window!" << std::endl;
         return false;

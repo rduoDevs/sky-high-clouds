@@ -109,6 +109,11 @@ add_executable(${PROJECT_NAME}
 	src/ResourceManager.cpp
     src/gpuData.h
     src/Application_gpuData.cpp
+
+    resources/ray.wgsl
+    resources/present.wgsl
+    src/tiny_obj_loader.h
+
 )
 
 # Specifies libraries to be linked (Imgui, glfw, webgpu)
@@ -117,6 +122,12 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     imgui
     webgpu
     glfw3webgpu
+)
+
+set_source_files_properties(
+    resources/ray.wgsl
+    resources/present.wgsl
+    PROPERTIES HEADER_FILE_ONLY TRUE
 )
 
 

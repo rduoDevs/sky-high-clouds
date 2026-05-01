@@ -1,6 +1,30 @@
 #pragma once
 #include <glm/glm.hpp>
 
+
+// Tris/cloud
+struct GPUTriangle {
+    glm::vec3 v0;
+    float pad0;
+    glm::vec3 v1;
+    float pad1;
+    glm::vec3 v2;
+    float pad2;
+    glm::vec3 normal;
+    float pad3;
+};
+
+struct CloudMesh {
+    glm::vec3 boundsMin;
+    float pad0;
+    glm::vec3 boundsMax;
+    float pad1;
+    uint32_t triangleOffset;
+    uint32_t triangleCount;
+    float shellThickness;
+    float pad2;
+};
+
 struct CameraData {
     glm::vec3 position;
     float _pad0;
