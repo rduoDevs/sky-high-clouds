@@ -1,7 +1,6 @@
 #pragma once
 #include <glm/glm.hpp>
 
-
 // Tris/cloud
 struct GPUTriangle {
     glm::vec3 v0;
@@ -50,7 +49,8 @@ struct WorldData {
 struct RaySettingsData {
     uint32_t maxBounces;
     uint32_t antiAliasingSamples;
-    uint32_t _pad[2];
+    uint32_t debugMode;
+    uint32_t _pad;
 };
 
 struct FrameCountData {

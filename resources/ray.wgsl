@@ -45,7 +45,7 @@ struct Intersection {
 struct Settings {
     maxBounces : u32,
     antiAliasingSamples : u32,
-    pad_0 : u32,
+    debugMode : u32,
     pad_1 : u32
 };
 
@@ -385,33 +385,136 @@ fn intersectAABB(ray: Ray, bMin: vec3<f32>, bMax: vec3<f32>) -> vec2<f32> {
 
 fn raymarchCloudMesh(ray: Ray, tmin: f32, tmax: f32) -> vec4<f32> {
     let sunDir = normalize(vec3<f32>(0.5, 1.0, 0.3));
-    let sunColor = vec3<f32>(1.2,1.2,1.2) * 15.0;
-    let ambientColor = vec3<f32>(1.2, 1.0,1.0);
+
+    // 0 = final render
+    // 1 = density only
+    // 2 = light energy only
+    // 3 = single scattering only
+    // 4 = multiple scattering only
+    // 5 = transmittance / opacity only
+    let debugMode = settings.debugMode;
+
+    let sunColor = vec3<f32>(1.2, 1.2, 1.2) * 15.0;
+    let ambientColor = vec3<f32>(1.2, 1.0, 1.0);
+
     let stepSize = 0.025;
     let extinction = 0.8;
     let scattering = 1.5;
     let g = 0.7;
 
+    let ambientStrength = 0.25;
+    let multiScatterStrength = 0.35;
+    let silverLiningStrength = 0.15;
+
     var color = vec3<f32>(0.0);
     var transmittance = 1.0;
     var t = tmin;
 
+    // Debug accumulators
+    var densityDebug = 0.0;
+    var lightDebug = 0.0;
+    var singleDebug = vec3<f32>(0.0);
+    var multiDebug = vec3<f32>(0.0);
+
     while (t < tmax && transmittance > 0.01) {
         let pos = ray.origin + ray.direction * t;
         let density = cloudDensityAtPoint(pos);
+
         if (density > 0.001) {
             let sampleT = exp(-density * stepSize * extinction);
-            let cosTheta = dot(ray.direction, sunDir);
+
+            // Current convention:
+            // ray.direction = camera -> sample
+            // sunDir = sample -> sun
+            let cosTheta = clamp(dot(ray.direction, sunDir), -1.0, 1.0);
             let phase = henyeyGreenstein(cosTheta, g);
+
             let lightEnergy = sampleCloudLighting(pos, sunDir);
-            let scattered = sunColor * density * scattering * phase * lightEnergy;
-            let ambient = ambientColor * density * 0.5;
-            color += (scattered + ambient) * transmittance * stepSize;
+
+            // Single scattering: sun -> sample -> camera
+            let singleScatter =
+                sunColor *
+                density *
+                scattering *
+                phase *
+                lightEnergy;
+
+            // Simple sky/environment fill
+            let ambient =
+                ambientColor *
+                density *
+                ambientStrength;
+
+            // Approximate higher-order / multiple scattering.
+            // This is intentionally softer than single scattering.
+            let viewDepth = 1.0 - transmittance;
+
+            let multipleScatterFactor =
+                density *
+                (0.35 + 0.65 * viewDepth) *
+                (0.5 + 0.5 * lightEnergy);
+
+            let multipleScatter =
+                ambientColor *
+                multipleScatterFactor *
+                multiScatterStrength;
+
+            // Forward-scattering glow / silver lining approximation
+            let forwardGlow =
+                pow(clamp(cosTheta, 0.0, 1.0), 3.0) *
+                density *
+                lightEnergy *
+                silverLiningStrength;
+
+            let silverLining =
+                sunColor *
+                forwardGlow;
+
+            let finalScatter =
+                singleScatter +
+                ambient +
+                multipleScatter +
+                silverLining;
+
+            color += finalScatter * transmittance * stepSize;
+
+            // Debug values
+            densityDebug += density * stepSize;
+            lightDebug += lightEnergy * density * stepSize;
+            singleDebug += singleScatter * transmittance * stepSize;
+            multiDebug += multipleScatter * transmittance * stepSize;
+
             transmittance *= sampleT;
         }
+
         t += stepSize;
     }
-    return vec4<f32>(color, 1.0 - transmittance);
+
+    let alpha = 1.0 - transmittance;
+
+    if (debugMode == 1u) {
+        let v = clamp(densityDebug, 0.0, 1.0);
+        return vec4<f32>(vec3<f32>(v), 1.0);
+    }
+
+    if (debugMode == 2u) {
+        let v = clamp(lightDebug, 0.0, 1.0);
+        return vec4<f32>(vec3<f32>(v), 1.0);
+    }
+
+    if (debugMode == 3u) {
+        return vec4<f32>(singleDebug, 1.0);
+    }
+
+    if (debugMode == 4u) {
+        return vec4<f32>(multiDebug, 1.0);
+    }
+
+    if (debugMode == 5u) {
+        return vec4<f32>(vec3<f32>(alpha), 1.0);
+    }
+
+    return vec4<f32>(color, alpha);
 }
 
 fn createRay(uv : vec2<f32>, size : vec2<f32>) -> Ray {
