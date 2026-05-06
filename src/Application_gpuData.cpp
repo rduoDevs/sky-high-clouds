@@ -4,7 +4,6 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 
-
 void Application::initBuffers() {
     wgpu::BufferDescriptor desc{};
     desc.mappedAtCreation = false;
@@ -54,12 +53,13 @@ void Application::initBuffers() {
     // world.spheres[1].material.emissionColorRefractive =
     //     glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
-    //world.spheres[2].centerRadius = glm::vec4(0.5f, 0.2f, -1.0f, 0.5f);
+    // world.spheres[2].centerRadius = glm::vec4(0.5f, 0.2f, -1.0f, 0.5f);
 
-    const RaySettingsData raySettings = {
+    m_raySettingsData = {
         .maxBounces = 2,
         .antiAliasingSamples = 1,
-        ._pad = {0, 0},
+        .debugMode = 0,
+        ._pad = 0,
     };
 
     const FrameCountData frameData = {.frameCount = 0, ._pad = {0, 0, 0}};
@@ -67,7 +67,8 @@ void Application::initBuffers() {
     m_queue.WriteBuffer(m_uniformBuffer, 0, &m_cameraData,
                         sizeof(m_cameraData));
     m_queue.WriteBuffer(m_worldBuffer, 0, &world, sizeof(world));
-    m_queue.WriteBuffer(m_settingsBuffer, 0, &raySettings, sizeof(raySettings));
+    m_queue.WriteBuffer(m_settingsBuffer, 0, &m_raySettingsData,
+                        sizeof(m_raySettingsData));
     m_queue.WriteBuffer(m_frameCountBuffer, 0, &frameData, sizeof(frameData));
 }
 
@@ -233,19 +234,14 @@ void Application::HandleMouseCallback(double xpos, double ypos) {
     m_lastMouseY = ypos;
 }
 
-
 void Application::loadCloudMesh() {
     tinyobj::attrib_t attrib;
     std::vector<tinyobj::shape_t> shapes;
     std::vector<tinyobj::material_t> materials;
     std::string err;
 
-    bool ok = tinyobj::LoadObj(
-        &attrib, &shapes, &materials, &err,
-        "resources/testobj.obj",
-        nullptr,
-        true
-        );
+    bool ok = tinyobj::LoadObj(&attrib, &shapes, &materials, &err,
+                               "resources/testobj.obj", nullptr, true);
 
     if (!ok) {
         std::cerr << "OBJ load failed: " << err << std::endl;
@@ -259,15 +255,15 @@ void Application::loadCloudMesh() {
     const float scale = 0.6f;
 
     std::vector<GPUTriangle> tris;
-    glm::vec3 boundsMin( std::numeric_limits<float>::max());
+    glm::vec3 boundsMin(std::numeric_limits<float>::max());
     glm::vec3 boundsMax(-std::numeric_limits<float>::max());
 
     auto getVertex = [&](int idx) {
-        return glm::vec3(
-                   attrib.vertices[3 * idx + 0],
-                   attrib.vertices[3 * idx + 1],
-                   attrib.vertices[3 * idx + 2]
-                   ) * scale + translate;
+        return glm::vec3(attrib.vertices[3 * idx + 0],
+                         attrib.vertices[3 * idx + 1],
+                         attrib.vertices[3 * idx + 2]) *
+                   scale +
+               translate;
     };
 
     for (const auto& shape : shapes) {
@@ -275,7 +271,10 @@ void Application::loadCloudMesh() {
         size_t off = 0;
         for (size_t f = 0; f < mesh.num_face_vertices.size(); f++) {
             int fv = mesh.num_face_vertices[f];
-            if (fv != 3) { off += fv; continue; }
+            if (fv != 3) {
+                off += fv;
+                continue;
+            }
 
             GPUTriangle t{};
             t.v0 = getVertex(mesh.indices[off + 0].vertex_index);
@@ -283,8 +282,10 @@ void Application::loadCloudMesh() {
             t.v2 = getVertex(mesh.indices[off + 2].vertex_index);
             t.normal = glm::normalize(glm::cross(t.v1 - t.v0, t.v2 - t.v0));
 
-            boundsMin = glm::min(boundsMin, glm::min(t.v0, glm::min(t.v1, t.v2)));
-            boundsMax = glm::max(boundsMax, glm::max(t.v0, glm::max(t.v1, t.v2)));
+            boundsMin =
+                glm::min(boundsMin, glm::min(t.v0, glm::min(t.v1, t.v2)));
+            boundsMax =
+                glm::max(boundsMax, glm::max(t.v0, glm::max(t.v1, t.v2)));
 
             tris.push_back(t);
             off += 3;
@@ -292,11 +293,12 @@ void Application::loadCloudMesh() {
     }
 
     m_triangleCount = static_cast<uint32_t>(tris.size());
-    std::cout << "Loaded mesh: " << m_triangleCount << " triangles" << std::endl;
+    std::cout << "Loaded mesh: " << m_triangleCount << " triangles"
+              << std::endl;
 
     wgpu::BufferDescriptor triDesc{};
     triDesc.label = "Triangle Buffer";
-    triDesc.size  = tris.size() * sizeof(GPUTriangle);
+    triDesc.size = tris.size() * sizeof(GPUTriangle);
     triDesc.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
     m_triangleBuffer = m_device.CreateBuffer(&triDesc);
     m_queue.WriteBuffer(m_triangleBuffer, 0, tris.data(), triDesc.size);
@@ -304,13 +306,13 @@ void Application::loadCloudMesh() {
     CloudMesh meta{};
     meta.boundsMin = boundsMin;
     meta.boundsMax = boundsMax;
-    meta.triangleOffset  = 0;
+    meta.triangleOffset = 0;
     meta.triangleCount = m_triangleCount;
-    meta.shellThickness  = 0.3f;
+    meta.shellThickness = 0.3f;
 
     wgpu::BufferDescriptor metaDesc{};
     metaDesc.label = "Cloud Mesh Buffer";
-    metaDesc.size  = sizeof(CloudMesh);
+    metaDesc.size = sizeof(CloudMesh);
     metaDesc.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
     m_cloudMeshBuffer = m_device.CreateBuffer(&metaDesc);
     m_queue.WriteBuffer(m_cloudMeshBuffer, 0, &meta, sizeof(meta));

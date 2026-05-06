@@ -45,7 +45,7 @@ struct Intersection {
 struct Settings {
     maxBounces : u32,
     antiAliasingSamples : u32,
-    pad_0 : u32,
+    debugMode : u32,
     pad_1 : u32
 };
 
@@ -392,7 +392,7 @@ fn raymarchCloudMesh(ray: Ray, tmin: f32, tmax: f32) -> vec4<f32> {
     // 3 = single scattering only
     // 4 = multiple scattering only
     // 5 = transmittance / opacity only
-    let debugMode = 0;
+    let debugMode = settings.debugMode;
 
     let sunColor = vec3<f32>(1.2, 1.2, 1.2) * 15.0;
     let ambientColor = vec3<f32>(1.2, 1.0, 1.0);
@@ -492,25 +492,25 @@ fn raymarchCloudMesh(ray: Ray, tmin: f32, tmax: f32) -> vec4<f32> {
 
     let alpha = 1.0 - transmittance;
 
-    if (debugMode == 1) {
+    if (debugMode == 1u) {
         let v = clamp(densityDebug, 0.0, 1.0);
         return vec4<f32>(vec3<f32>(v), 1.0);
     }
 
-    if (debugMode == 2) {
+    if (debugMode == 2u) {
         let v = clamp(lightDebug, 0.0, 1.0);
         return vec4<f32>(vec3<f32>(v), 1.0);
     }
 
-    if (debugMode == 3) {
+    if (debugMode == 3u) {
         return vec4<f32>(singleDebug, 1.0);
     }
 
-    if (debugMode == 4) {
+    if (debugMode == 4u) {
         return vec4<f32>(multiDebug, 1.0);
     }
 
-    if (debugMode == 5) {
+    if (debugMode == 5u) {
         return vec4<f32>(vec3<f32>(alpha), 1.0);
     }
 

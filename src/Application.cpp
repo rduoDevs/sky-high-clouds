@@ -219,7 +219,8 @@ bool Application::initWindow() {
     // Create window
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    m_window = glfwCreateWindow(640, 480, "Sky High Clouds | Physically-Accurate Clouds", NULL, NULL);
+    m_window = glfwCreateWindow(
+        640, 480, "Sky High Clouds | Physically-Accurate Clouds", NULL, NULL);
     if (!m_window) {
         std::cerr << "Could not open window!" << std::endl;
         return false;
@@ -573,6 +574,41 @@ void Application::onGui(RenderPassEncoder renderPass) {
     const float frameMs = (fps > 0.0f) ? (1000.0f / fps) : 0.0f;
     ImGui::Text("FPS: %.1f", fps);
     ImGui::Text("Frame time: %.3f ms", frameMs);
+
+    ImGui::SeparatorText("Cloud Debug Mode");
+    uint32_t debugMode = m_raySettingsData.debugMode;
+
+    if (ImGui::Button("Final Render")) {
+        debugMode = 0;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Density")) {
+        debugMode = 1;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Light Energy")) {
+        debugMode = 2;
+    }
+
+    if (ImGui::Button("Single Scattering")) {
+        debugMode = 3;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Multiple Scattering")) {
+        debugMode = 4;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Opacity")) {
+        debugMode = 5;
+    }
+
+    if (debugMode != m_raySettingsData.debugMode) {
+        m_raySettingsData.debugMode = debugMode;
+        m_queue.WriteBuffer(m_settingsBuffer, 0, &m_raySettingsData,
+                            sizeof(m_raySettingsData));
+        m_frameCount = 0;
+    }
+
     if (ImGui::Button("Save Output")) {
         // TODO: Implement texture saving
         std::cout << "Save output not yet implemented" << std::endl;
