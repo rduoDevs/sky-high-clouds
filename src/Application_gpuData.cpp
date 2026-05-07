@@ -64,6 +64,33 @@ void Application::initBuffers() {
 
     const FrameCountData frameData = {.frameCount = 0, ._pad = {0, 0, 0}};
 
+    // textures and samplers
+
+    wgpu::SamplerDescriptor samplerDesc{};
+    samplerDesc.addressModeU = wgpu::AddressMode::ClampToEdge;
+    samplerDesc.addressModeV = wgpu::AddressMode::ClampToEdge;
+    samplerDesc.magFilter = wgpu::FilterMode::Linear;
+    samplerDesc.minFilter = wgpu::FilterMode::Linear;
+
+    this->m_texSampler = m_device.CreateSampler(&samplerDesc);
+
+    wgpu::TextureDescriptor textureDesc{};
+    textureDesc.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst;
+    textureDesc.size = {64,64,49};
+    textureDesc.format = wgpu::TextureFormat::RGBA8Unorm;
+
+    this->m_higherOrderTexture = m_device.CreateTexture(&textureDesc);
+
+    wgpu::TextureViewDescriptor viewDesc{};
+    viewDesc.dimension = wgpu::TextureViewDimension::e2DArray;
+
+    this->m_higherOrderTextureView = m_higherOrderTexture.CreateView(&viewDesc);
+
+    // When indexing the texture array, the array is laid out as such
+    // | A | B1 | B2 | C | D | P | X |
+    // Each of these sections is 7 images (1,2,3,4-5,6-8,9-14) orders of scattering
+    // m_queue.WriteBuffer() // TODO
+
     m_queue.WriteBuffer(m_uniformBuffer, 0, &m_cameraData,
                         sizeof(m_cameraData));
     m_queue.WriteBuffer(m_worldBuffer, 0, &world, sizeof(world));
@@ -72,7 +99,7 @@ void Application::initBuffers() {
 }
 
 void Application::initBindGroup() {
-    std::vector<wgpu::BindGroupEntry> entries(7);  // ← 5 → 7
+    std::vector<wgpu::BindGroupEntry> entries(9);  // ← 5 → 7
 
     entries[0].binding = 0;
     entries[0].buffer = m_uniformBuffer;
@@ -107,6 +134,12 @@ void Application::initBindGroup() {
     entries[6].offset = 0;
     entries[6].size = sizeof(CloudMesh);
 
+    entries[7].binding = 7;
+    entries[7].textureView = m_higherOrderTextureView;
+
+    entries[8].binding = 8;
+    entries[8].sampler = m_texSampler;
+
     wgpu::BindGroupDescriptor bindGroupDesc;
     bindGroupDesc.layout = m_bindGroupLayout;
     bindGroupDesc.entryCount = (uint32_t)entries.size();
@@ -115,7 +148,7 @@ void Application::initBindGroup() {
 }
 
 void Application::initBindGroupLayout() {
-    std::vector<wgpu::BindGroupLayoutEntry> bindings(7);  // ← 5 → 7
+    std::vector<wgpu::BindGroupLayoutEntry> bindings(9);  // ← 5 → 7
 
     bindings[0].binding = 0;
     bindings[0].buffer.type = wgpu::BufferBindingType::Uniform;
@@ -152,6 +185,15 @@ void Application::initBindGroupLayout() {
     bindings[6].buffer.type = wgpu::BufferBindingType::Uniform;
     bindings[6].buffer.minBindingSize = sizeof(CloudMesh);
     bindings[6].visibility = wgpu::ShaderStage::Compute;
+
+    bindings[7].binding = 7;
+    bindings[7].texture.sampleType = wgpu::TextureSampleType::Float;
+    bindings[7].texture.viewDimension = wgpu::TextureViewDimension::e2DArray;
+    bindings[7].visibility = wgpu::ShaderStage::Compute;
+
+    bindings[8].binding = 8;
+    bindings[8].sampler.type = wgpu::SamplerBindingType::Filtering;
+    bindings[8].visibility = wgpu::ShaderStage::Compute;
 
     wgpu::BindGroupLayoutDescriptor bindGroupLayoutDesc;
     bindGroupLayoutDesc.entryCount = (uint32_t)bindings.size();

@@ -83,6 +83,176 @@ const PI = 3.14159265359;
 @group(0) @binding(3) var<uniform> settings : Settings;
 @group(0) @binding(4) var<uniform> frameData : FrameUniform;
 
+// lookups for higher orders
+
+@group(0) @binding(7) var higherOrderTextures: texture_2d_array<f32>;
+@group(0) @binding(8) var texSampler: sampler;
+
+const collectorPosition = vec3f(1,1,1);
+const sunDir = normalize(vec3<f32>(0.5, 1.0, 0.3));
+
+// canonical transport function <T,c,sigma>(phi_L,phi_V,psi_V,t,d)
+// mu_V = cos(phi_V), mu_L = cos(phi_L)
+
+struct collectorDelta{
+    phi_L: f32,     // 90deg - Angle of inclination between the collector area and the sun
+    phi_V: f32,     // Viewpoint pitch offset from directly perpendicular to the slab surface
+    psi_V: f32,     // Viewpoint rotation offset from the sun direction
+    // t: f32,         // Total slab thickness
+    d: f32,         // depth of point p into the slab
+}
+
+// Get the 5 parameterizing variables for this given viewing position and collector location
+fn getCollectorDelta(p: vec3<f32>, omega_V: vec3<f32>, omega_L: vec3<f32>, c: vec3<f32>, c_normal: vec3<f32>) -> collectorDelta {
+    // 
+    var cd = collectorDelta(0,0,0,0);
+    cd.phi_L = acos(dot(normalize(c_normal), normalize(omega_L)));
+    cd.phi_V = acos(dot(normalize(-c_normal), normalize(omega_V)));
+
+    // extract perpendicular components and find the angle between them to find total viewpoint deviance from sun direction
+    let omega_V_perp = omega_V - (dot(omega_V, -c_normal) * -c_normal);
+    let omega_L_perp = omega_L - (dot(omega_L, c_normal) * c_normal);
+
+    cd.psi_V = acos(dot(normalize(omega_V_perp), normalize(omega_L_perp)));
+
+    // find p distance into the slab
+
+    let d_non_perp = c - p;
+
+    let d = dot(d_non_perp, c_normal) * c_normal;
+
+    cd.d = length(d);
+
+    return cd;
+}
+
+fn mu_V_to_uv(order: i32, mu_V: f32) -> f32 {
+    return (mu_V+1)/2;
+}
+
+// theta effectively translates to phi_V... I think
+fn theta_to_uv(order: i32, theta: f32) -> f32 {
+    return (theta+1)/2;
+}
+
+// Mu_L is only the upper half of the angle range as the light source is assumed to be above the cloud
+fn mu_L_to_uv(order: i32, mu_L: f32) -> f32 {
+    return (mu_L-0.05)/0.95;
+}
+
+fn t_to_uv(order: i32, t: f32) -> f32 {
+    if(order < 3){
+        return (t-50)/450;
+    }else if(order < 5){
+        return (t-10)/490;
+    }else if(order < 6){
+        return (t-50)/950;
+    }else{
+        return (t-50)/4950;
+    }
+}
+
+// When indexing the texture array, the array is laid out as such
+// | A | B1 | B2 | C | D | P | X |
+// Each of these sections is 7 images (1,2,3,4-5,6-8,9-14) orders of scattering
+
+// Clips input values and samples texture P at the specified index. Texture X has to do with the peak values of the scattering.
+fn sampleTexA(order: i32, t:f32, mu_V: f32) -> f32 {
+    var uv = vec2f(0);
+    uv[0] = t_to_uv(order, t);
+    uv[1] = mu_V_to_uv(order, mu_V);
+
+    return textureSample(higherOrderTextures, texSampler, uv, order)[0];
+}
+
+// Clips input values and samples textures B1 and B2 at the specified index. (B1 - B2) corresponds with Peak Location.
+fn sampleTexB(order: i32, t: f32, mu_V: f32, mu_L: f32) -> f32 {
+    var uv1 = vec2f(0);
+    var uv2 = vec2f(0);
+    uv1[0] = t_to_uv(order, t);
+    uv2[0] = t_to_uv(order, t);
+
+    uv1[1] = mu_V_to_uv(order, mu_V);
+    uv2[1] = mu_L_to_uv(order, mu_L);
+
+    // B1 - B2
+    return textureSample(higherOrderTextures, texSampler, uv1, 7 + order)[0] - textureSample(higherOrderTextures, texSampler, uv2, 14 + order)[0];
+}
+
+// Clips input values and samples texture C at the specified index. C corresponds with Broadness.
+fn sampleTexC(order: i32, t:f32, mu_V: f32) -> f32 {
+    var uv = vec2f(0);
+    uv[0] = t_to_uv(order, t);
+    uv[1] = mu_V_to_uv(order, mu_V);
+
+    return textureSample(higherOrderTextures, texSampler, uv, 21 + order)[0];
+}
+
+// Clips input values and samples texture D at the specified index. D corresponds with Lograrithmic Behaviour.
+fn sampleTexD(order: i32, t: f32, mu_V: f32) -> f32 {
+    var uv = vec2f(0);
+    uv[0] = t_to_uv(order, t);
+    uv[1] = mu_V_to_uv(order, mu_V);
+
+    return textureSample(higherOrderTextures, texSampler, uv, 28 + order)[0];
+}
+
+// Clips input values and samples texture P at the specified index. P corresponds with the overall Anisotropy of the scattering. 
+fn sampleTexP(order: i32, t:f32, theta: f32) -> f32 {
+    var uv = vec2f(0);
+    uv[0] = t_to_uv(order, t);
+    uv[1] = theta_to_uv(order, theta);
+
+    return textureSample(higherOrderTextures, texSampler, uv, 35 + order)[0];
+}
+
+// Clips input values and samples texture X at the specified index. Texture X has to do with the peak values of the scattering.
+fn sampleTexX(order: i32, t:f32, mu_L: f32) -> f32 {
+    var uv = vec2f(0);
+    uv[0] = t_to_uv(order, t);
+    uv[1] = mu_L_to_uv(order, mu_L);
+
+    return textureSample(higherOrderTextures, texSampler, uv, 42 + order)[0];
+}
+
+// TODO: Find depth of cloud mesh from every given point
+fn bouthorsScattering(position: vec3<f32>, sunDir: vec3<f32>, normal: vec3<f32>) -> f32 {
+    // hardcoded collector position. Should be changed in full algo but for presentation we can work with this
+    var collectorAreaPosition = collectorPosition;
+    var collectorAreaNormal = vec3f(1,1,1);    
+
+    var t = 250.0;
+
+    // When indexing the texture array, the array is laid out as such
+    // | A | B1 | B2 | C | D | P | X |
+    // Each of these sections is 7 images (1,2,3,4-5,6-8,9-14) orders of scattering
+    for(var i = 0; i < 7; i++){ 
+        // Loop through the scattering orders
+        // find the collector position
+        // TODO
+
+        // get 5 parameters from collector
+        let deltaStruct = getCollectorDelta(position, normal, sunDir, collectorAreaPosition, collectorAreaNormal);
+
+        let mu_V = cos(deltaStruct.phi_V);
+        let mu_L = cos(deltaStruct.phi_L);
+        let theta = deltaStruct.psi_V;
+
+        // sample from texture arrays based on those parameters and sum them into the final light transport T
+        // This is the first equation in section 5.2 of the paper
+        let a = sampleTexA(i, t, mu_V);
+        let b = sampleTexB(i, t, mu_V, mu_L);
+        let c = sampleTexC(i, t, mu_V);
+        let d = sampleTexD(i, t, mu_V);
+        let p = sampleTexP(i, t, theta);
+        let x = sampleTexX(i, t, mu_L);
+
+        let t_for_order = p * a * x * mu_L * ((log(deltaStruct.d + d))/(log(b + d))) * exp(-1 * (pow(deltaStruct.d - b,2.0)/pow(2 * c,2.0)));
+        t += t_for_order;
+    }
+    return t;
+}
+
 // PCG random number generator state
 var<private> rngState: u32;
 
@@ -384,7 +554,6 @@ fn intersectAABB(ray: Ray, bMin: vec3<f32>, bMax: vec3<f32>) -> vec2<f32> {
 }
 
 fn raymarchCloudMesh(ray: Ray, tmin: f32, tmax: f32) -> vec4<f32> {
-    let sunDir = normalize(vec3<f32>(0.5, 1.0, 0.3));
     let sunColor = vec3<f32>(1.2,1.2,1.2) * 15.0;
     let ambientColor = vec3<f32>(1.2, 1.0,1.0);
     let stepSize = 0.025;
@@ -539,9 +708,13 @@ fn calculateLight(ray : Ray, intersection : Intersection) -> vec3<f32> {
             if (shadowIntersection.distance > lightDist) {
                 let diffuse = max(dot(intersection.normal, lightDir), 0.0);
                 lightColor += sphere.material.emissionColor * diffuse / (lightDist * lightDist);
+                // Bouthors Scattering
+                let intersectionPoint = ray.origin + (ray.direction * intersection.distance);
+                lightColor += bouthorsScattering(intersectionPoint, sunDir,intersection.normal);
             }
         }
     }
+
     return lightColor;
 }
 
