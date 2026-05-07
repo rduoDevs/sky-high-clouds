@@ -92,18 +92,59 @@ const PI = 3.14159265359;
 const HO_W: u32 = 64u;
 const HO_H: u32 = 64u;
 const HO_LAYER_COUNT: u32 = 49u;
+const HO_ORDER_COUNT: u32 = 7u;
+
+// Domain bounds from LogGaussAniso_Params_*.txt, ordered as:
+// 1, 2, 3, 4-5, 6-8, 9-14, 15p
+const T_MIN_BY_ORDER = array<f32, 7>(50.0, 50.0, 50.0, 10.0, 10.0, 50.0, 50.0);
+const T_MAX_BY_ORDER = array<f32, 7>(500.0, 500.0, 500.0, 500.0, 500.0, 1000.0, 5000.0);
+const MU_V_MIN: f32 = -1.0;
+const MU_V_MAX: f32 = 1.0;
+const MU_L_MIN: f32 = 0.05;
+const MU_L_MAX: f32 = 1.0;
+const PSI_COS_MIN: f32 = -1.0;
+const PSI_COS_MAX: f32 = 1.0;
+
+fn clampOrderIndex(order: i32) -> u32 {
+    let idx = select(0u, u32(order), order >= 0);
+    return min(idx, HO_ORDER_COUNT - 1u);
+}
+
+fn normalizeToUnit(v: f32, minV: f32, maxV: f32) -> f32 {
+    let denom = max(maxV - minV, 1e-6);
+    return clamp((v - minV) / denom, 0.0, 1.0);
+}
+
+fn tableAt(layer: u32, x: u32, y: u32) -> f32 {
+    let safeLayer = min(layer, HO_LAYER_COUNT - 1u);
+    let idx = safeLayer * (HO_W * HO_H) + y * HO_W + x;
+    return higherOrderTables[idx];
+}
 
 // Sample from packed table buffer using normalized UV and layer index
 fn sampleFromTable(layer: u32, uv: vec2<f32>) -> f32 {
-    // clamp UV to [0,1]
+    // Bilinear interpolation to mimic GLSL linear texture sampling.
     let u = clamp(uv.x, 0.0, 1.0);
     let v = clamp(uv.y, 0.0, 1.0);
-    let x = u32(floor(u * f32(HO_W)));
-    let y = u32(floor(v * f32(HO_H)));
-    let sx = select(x, HO_W - 1u, x >= HO_W);
-    let sy = select(y, HO_H - 1u, y >= HO_H);
-    let idx = layer * (HO_W * HO_H) + sy * HO_W + sx;
-    return higherOrderTables[idx];
+
+    let fx = u * f32(HO_W - 1u);
+    let fy = v * f32(HO_H - 1u);
+    let x0 = u32(floor(fx));
+    let y0 = u32(floor(fy));
+    let x1 = min(x0 + 1u, HO_W - 1u);
+    let y1 = min(y0 + 1u, HO_H - 1u);
+
+    let tx = fx - f32(x0);
+    let ty = fy - f32(y0);
+
+    let v00 = tableAt(layer, x0, y0);
+    let v10 = tableAt(layer, x1, y0);
+    let v01 = tableAt(layer, x0, y1);
+    let v11 = tableAt(layer, x1, y1);
+
+    let vx0 = mix(v00, v10, tx);
+    let vx1 = mix(v01, v11, tx);
+    return mix(vx0, vx1, ty);
 }
 
 const collectorPosition = vec3f(1,1,1);
@@ -145,31 +186,26 @@ fn getCollectorDelta(p: vec3<f32>, omega_V: vec3<f32>, omega_L: vec3<f32>, c: ve
 }
 
 fn mu_V_to_uv(order: i32, mu_V: f32) -> f32 {
-    return (mu_V+1)/2;
+    _ = order;
+    return normalizeToUnit(mu_V, MU_V_MIN, MU_V_MAX);
 }
 
 // theta effectively translates to phi_V... I think
 fn theta_to_uv(order: i32, theta: f32) -> f32 {
-    // return (theta+1)/2;
-    // return theta / PI;
-    return (cos(theta) + 1.0) * 0.5;
+    _ = order;
+    // Params files use [-1,1] for this axis, so map cos(theta) into that domain.
+    return normalizeToUnit(-cos(theta), PSI_COS_MIN, PSI_COS_MAX);
 }
 
 // Mu_L is only the upper half of the angle range as the light source is assumed to be above the cloud
 fn mu_L_to_uv(order: i32, mu_L: f32) -> f32 {
-    return (mu_L-0.05)/0.95;
+    _ = order;
+    return normalizeToUnit(mu_L, MU_L_MIN, MU_L_MAX);
 }
 
 fn t_to_uv(order: i32, t: f32) -> f32 {
-    if(order < 3){
-        return (t-50)/450;
-    }else if(order < 5){
-        return (t-10)/490;
-    }else if(order < 6){
-        return (t-50)/950;
-    }else{
-        return (t-50)/4950;
-    }
+    let idx = clampOrderIndex(order);
+    return normalizeToUnit(t, T_MIN_BY_ORDER[idx], T_MAX_BY_ORDER[idx]);
 }
 
 // Helper function to convert normalized UV coordinates to texture coordinates
@@ -501,12 +537,22 @@ fn intersectMesh(ray: Ray, mesh: CloudMesh) -> Intersection {
 }
 
 fn getSkyBoxColor(ray: Ray) -> vec3<f32> {
-    // top == mid blue, ground == brown, horizon == sharp cutoff of ground, but gradient from light blue to top of mid blue
     let t = 0.5 * (ray.direction.y + 1.0);
+    
     if (ray.direction.y < 0.0) {
+        // Ground to horizon
         return mix(vec3<f32>(0.39, 0.25, 0.09), vec3<f32>(0.7, 0.8, 1.0), t);
     } else {
-        return mix(vec3<f32>(0.7, 0.8, 1.0), vec3<f32>(1.0, 0.9, 1.0), t);
+        // Horizon to sky
+        // add the sun as a very bright spot in the sky
+        
+        // return mix(vec3<f32>(0.7, 0.8, 1.0), vec3<f32>(0.4, 0.6, 1.0), t);
+
+        let sunIntensity = max(dot(ray.direction, sunDir), 0.0);
+        let sunColor = vec3<f32>(1.0, 0.9, 0.7) * pow(sunIntensity, 100.0);
+        let skyColor = mix(vec3<f32>(0.7, 0.8, 1.0), vec3<f32>(0.4, 0.6, 1.0), t);
+        return skyColor + sunColor;
+
     }
 }
 

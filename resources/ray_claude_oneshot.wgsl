@@ -234,7 +234,7 @@ fn rayTriIntersect(ray: Ray, tri: Triangle) -> TriHit {
     if (v < 0.0 || u + v > 1.0) { return TriHit(Infinity, vec3<f32>(0.0)); }
     let t  = f * dot(e2, q);
     if (t < EPSILON) { return TriHit(Infinity, vec3<f32>(0.0)); }
-    return TriHit(t, tri.normal);
+    return TriHit(t * 200.0f, tri.normal);
 }
 
 // ---------------------------------------------------------------------------
@@ -396,136 +396,6 @@ fn orderSetInfo(setIdx: u32) -> OrderSetInfo {
     }
 }
 
-const HO_W: u32 = 64u;
-const HO_H: u32 = 64u;
-const HO_LAYER_COUNT: u32 = 49u;
-const HO_ORDER_COUNT: u32 = 7u;
-
-// Domain bounds from LogGaussAniso_Params_*.txt, ordered as:
-// 1, 2, 3, 4-5, 6-8, 9-14, 15p
-const T_MIN_BY_ORDER = array<f32, 7>(50.0, 50.0, 50.0, 10.0, 10.0, 50.0, 50.0);
-const T_MAX_BY_ORDER = array<f32, 7>(500.0, 500.0, 500.0, 500.0, 500.0, 1000.0, 5000.0);
-const MU_V_MIN: f32 = -1.0;
-const MU_V_MAX: f32 = 1.0;
-const MU_L_MIN: f32 = 0.05;
-const MU_L_MAX: f32 = 1.0;
-const PSI_COS_MIN: f32 = -1.0;
-const PSI_COS_MAX: f32 = 1.0;
-
-fn clampOrderIndex(order: i32) -> u32 {
-    let idx = select(0u, u32(order), order >= 0);
-    return min(idx, HO_ORDER_COUNT - 1u);
-}
-
-fn normalizeToUnit(v: f32, minV: f32, maxV: f32) -> f32 {
-    let denom = max(maxV - minV, 1e-6);
-    return clamp((v - minV) / denom, 0.0, 1.0);
-}
-
-fn tableAt(layer: u32, x: u32, y: u32) -> f32 {
-    let safeLayer = min(layer, HO_LAYER_COUNT - 1u);
-    let idx = safeLayer * (HO_W * HO_H) + y * HO_W + x;
-    return higherOrderTables[idx];
-}
-
-// Sample from packed table buffer using normalized UV and layer index
-fn sampleFromTable(layer: u32, uv: vec2<f32>) -> f32 {
-    // Bilinear interpolation to mimic GLSL linear texture sampling.
-    let u = clamp(uv.x, 0.0, 1.0);
-    let v = clamp(uv.y, 0.0, 1.0);
-
-    let fx = u * f32(HO_W - 1u);
-    let fy = v * f32(HO_H - 1u);
-    let x0 = u32(floor(fx));
-    let y0 = u32(floor(fy));
-    let x1 = min(x0 + 1u, HO_W - 1u);
-    let y1 = min(y0 + 1u, HO_H - 1u);
-
-    let tx = fx - f32(x0);
-    let ty = fy - f32(y0);
-
-    let v00 = tableAt(layer, x0, y0);
-    let v10 = tableAt(layer, x1, y0);
-    let v01 = tableAt(layer, x0, y1);
-    let v11 = tableAt(layer, x1, y1);
-
-    let vx0 = mix(v00, v10, tx);
-    let vx1 = mix(v01, v11, tx);
-    return mix(vx0, vx1, ty);
-}
-
-fn mu_V_to_uv(order: i32, mu_V: f32) -> f32 {
-    return normalizeToUnit(mu_V, MU_V_MIN, MU_V_MAX);
-}
-
-fn theta_to_uv(order: i32, theta: f32) -> f32 {
-    // Params files use [-1,1] for this axis, so map cos(theta) into that domain.
-    return normalizeToUnit(-cos(theta), PSI_COS_MIN, PSI_COS_MAX);
-}
-
-fn mu_L_to_uv(order: i32, mu_L: f32) -> f32 {
-    return normalizeToUnit(mu_L, MU_L_MIN, MU_L_MAX);
-}
-
-fn t_to_uv(order: i32, t: f32) -> f32 {
-    let idx = clampOrderIndex(order);
-    return normalizeToUnit(t, T_MIN_BY_ORDER[idx] / 100.0f, T_MAX_BY_ORDER[idx] / 100.0f);
-}
-
-fn sampleTexA(order: i32, t:f32, mu_V: f32) -> f32 {
-    var uv = vec2f(0);
-    uv[0] = t_to_uv(order, t);
-    uv[1] = mu_V_to_uv(order, mu_V);
-    return sampleFromTable(u32(order), uv);
-}
-
-fn sampleTexB(order: i32, t: f32, mu_V: f32, mu_L: f32) -> f32 {
-    var uv1 = vec2f(0);
-    var uv2 = vec2f(0);
-    uv1[0] = t_to_uv(order, t);
-    uv2[0] = t_to_uv(order, t);
-
-    uv1[1] = mu_V_to_uv(order, mu_V);
-    uv2[1] = mu_L_to_uv(order, mu_L);
-
-    let idx1 = 7u + u32(order);
-    let idx2 = 14u + u32(order);
-    // B1 - B2
-    return sampleFromTable(idx1, uv1) - sampleFromTable(idx2, uv2);
-}
-
-fn sampleTexC(order: i32, t:f32, mu_V: f32) -> f32 {
-    var uv = vec2f(0);
-    uv[0] = t_to_uv(order, t);
-    uv[1] = mu_V_to_uv(order, mu_V);
-    let idx = 21u + u32(order);
-    return sampleFromTable(idx, uv);
-}
-
-fn sampleTexD(order: i32, t: f32, mu_V: f32) -> f32 {
-    var uv = vec2f(0);
-    uv[0] = t_to_uv(order, t);
-    uv[1] = mu_V_to_uv(order, mu_V);
-    let idx = 28u + u32(order);
-    return sampleFromTable(idx, uv);
-}
-
-fn sampleTexP(order: i32, t:f32, theta: f32) -> f32 {
-    var uv = vec2f(0);
-    uv[0] = t_to_uv(order, t);
-    uv[1] = theta_to_uv(order, theta);
-    let idx = 35u + u32(order);
-    return sampleFromTable(idx, uv);
-}
-
-fn sampleTexX(order: i32, t:f32, mu_L: f32) -> f32 {
-    var uv = vec2f(0);
-    uv[0] = t_to_uv(order, t);
-    uv[1] = mu_L_to_uv(order, mu_L);
-    let idx = 42u + u32(order);
-    return sampleFromTable(idx, uv);
-}
-
 // Analytical approximation of canonical T for a given scattering order set.
 // Parameters:
 //   V   = cos(φV)   viewing zenith cosine (0=horizontal, 1=vertical)
@@ -537,31 +407,52 @@ fn sampleTexX(order: i32, t:f32, mu_L: f32) -> f32 {
 fn canonicalT(V: f32, L: f32, cosTheta: f32, d: f32, t: f32, setIdx: u32) -> f32 {
     let info = orderSetInfo(setIdx);
 
-    if (info.isIsotropic || setIdx >= 7u) {
-        let optDepth = t * KAPPA_BASE;
-        let A        = exp(-0.3 * optDepth) * (0.4 + 0.6 * V);
-        let diffuse  = A * (1.0 - exp(-optDepth * 0.1)) * 0.5;
-        return clamp(diffuse, 0.0, 1.0);
+    // For low orders, scattering is strongly forward-peaked (anisotropic).
+    // For high orders (31-∞) behaviour is isotropic.
+    var P = 1.0f; // Phase factor P(θ)
+    if (!info.isIsotropic) {
+        // Anisotropy factor: stronger for lower scattering orders
+        // (Inspired by Chandrasekhar X-function; Section 5.2)
+        let orderMid   = 0.5 * (info.minOrder + info.maxOrder);
+        let anisotropy = exp(-orderMid * 0.07) * (0.6 + 0.4 * cosTheta);
+        P = max(anisotropy, 0.0);
     }
 
-    let order = i32(setIdx);
-    
-    let A = sampleTexA(order, t, V);
-    let B = max(sampleTexB(order, t, V, L), 0.0);
-    let C = max(sampleTexC(order, t, V), 0.01);
-    let D = max(sampleTexD(order, t, V), 0.01);
-    let P = sampleTexP(order, t, acos(clamp(cosTheta, -1.0, 1.0)));
-    let X = sampleTexX(order, t, L);
-    
-    let logNum = log(d + D);
-    let logDen = log(B + D);
-    var Lval   = 0.0f;
-    if (abs(logDen) > EPSILON) {
-        Lval = L * (logNum / logDen);
+    // X(t, L): modulates result according to lighting angle (Section 5.2)
+    //  Inspired by Chandrasekhar's X-function
+    let X = 1.0 / (1.0 + exp(-3.0 * (L - 0.3))) * (0.5 + 0.5 * L);
+
+    // A(t, V): amplitude (decays with t/optical_depth, peaks near surface)
+    let optDepth = t * KAPPA_BASE;
+    let A        = exp(-0.3 * optDepth) * (0.4 + 0.6 * V);
+
+    // B(t, V, L): the "skewed Gaussian" peak depth
+    let B1 = t * clamp(V * 0.5 + 0.1, 0.05, 0.95);
+    let B2 = t * L * 0.15;
+    let B  = B1 - B2;
+
+    // C(t, V): Gaussian width
+    let C = (t * 0.3 + 10.0) * (0.5 + 0.5 * V);
+
+    // D(t, V): offset to avoid log(0)
+    let D = max(t * 0.01, 0.1);
+
+    // Depth-response: skewed Gaussian in d (Eq for T, Section 5.2)
+    let logNum  = log(d + D);
+    let logDen  = log(B + D);
+    var Lval    = 0.0f;
+    if (abs(logDen) > EPSILON && abs(C) > EPSILON) {
+        Lval = L * (logNum / (2.0 * C * C * logDen));
     }
-    let gauss = exp(-pow(d - B, 2.0) / (2.0 * C * C));
+    let gauss = exp(-pow(d - B, 2.0) / (2.0 * C * C + EPSILON));
 
     var T = P * A * X * Lval * gauss;
+
+    // For isotropic set (31-∞): ensure smooth isotropic contribution
+    if (info.isIsotropic) {
+        let diffuse = A * (1.0 - exp(-optDepth * 0.1)) * 0.5;
+        T = max(T, diffuse);
+    }
 
     return clamp(T, 0.0, 1.0);
 }
@@ -764,7 +655,7 @@ fn multipleScattering(
         let radiance = litSurfaceRadiance(result.worldPos, wL);
 
         // Attenuate by T (light transport from collector to p)
-        msColor += radiance * result.T;
+        msColor += radiance * result.T * 5.0f;
     }
 
     // Normalise (8 sets)
@@ -998,16 +889,16 @@ fn renderPixel(pixelCoord: vec2<f32>, dims: vec2<f32>, seed: ptr<function, u32>)
 
     // ---- Multiple scattering (Section 6.1) ----
     let mask   = settings.scatteringOrderMask;
-    // let msContrib = multipleScattering(pMid, wV, wL, mask);
+    let msContrib = multipleScattering(pMid, wV, wL, mask);
 
     // ---- Single scattering (Section 6.2) ----
     let ssContrib = singleScattering(ray.origin, ray.direction, tEntry, tExit, wL);
 
     // ---- Opacity (Section 6.3) ----
-    let alpha  = 1.0f; //computeOpacity(ray.origin, ray.direction, tEntry, tExit);
+    let alpha  = 1.0f; // computeOpacity(ray.origin, ray.direction, tEntry, tExit);
 
     // ---- Composite (Eq. deferred shading, Section 8.1) ----
-    let cloudRadiance = ssContrib;
+    let cloudRadiance = msContrib + ssContrib;
 
     // Alpha-blend with sky
     let bg     = getSkyColor(ray.direction);
