@@ -71,8 +71,10 @@ struct CloudMesh {
 const Infinity = 1e6;
 const GroundYLevel = -1.0;
 const NoMaterial = Material(vec3<f32>(0.0), 0.0, 0.0, 0.0, vec3<f32>(0.0), 0.0);
-const GroundMaterial1 = Material(vec3<f32>(0.5, 0.5, 0.5), 0.0, 0.0, 0.0, vec3<f32>(0.0), 0.0);
-const GroundMaterial2 = Material(vec3<f32>(0.3, 0.3, 0.3), 0.0, 0.0, 0.0, vec3<f32>(0.0), 0.0);
+//  rgb(100,65,23)
+const GroundMaterial1 = Material(vec3<f32>(0.39, 0.25, 0.09), 0.0, 0.0, 0.0, vec3<f32>(0.0), 0.0);
+//  rgb(0,100,0)
+const GroundMaterial2 = Material(vec3<f32>(0.0, 0.39, 0.0), 0.0, 0.0, 0.0, vec3<f32>(0.0), 0.0);
 const NoIntersection = Intersection(Infinity, vec3<f32>(0.0), false, NoMaterial);
 const EPSILON = 1e-4;
 const PI = 3.14159265359;
@@ -84,9 +86,25 @@ const PI = 3.14159265359;
 @group(0) @binding(4) var<uniform> frameData : FrameUniform;
 
 // lookups for higher orders
+// Packed as a single storage buffer: layers * WIDTH * HEIGHT floats
+@group(0) @binding(7) var<storage, read> higherOrderTables: array<f32>;
 
-@group(0) @binding(7) var higherOrderTextures: texture_2d_array<f32>;
-@group(0) @binding(8) var texSampler: sampler;
+const HO_W: u32 = 64u;
+const HO_H: u32 = 64u;
+const HO_LAYER_COUNT: u32 = 49u;
+
+// Sample from packed table buffer using normalized UV and layer index
+fn sampleFromTable(layer: u32, uv: vec2<f32>) -> f32 {
+    // clamp UV to [0,1]
+    let u = clamp(uv.x, 0.0, 1.0);
+    let v = clamp(uv.y, 0.0, 1.0);
+    let x = u32(floor(u * f32(HO_W)));
+    let y = u32(floor(v * f32(HO_H)));
+    let sx = select(x, HO_W - 1u, x >= HO_W);
+    let sy = select(y, HO_H - 1u, y >= HO_H);
+    let idx = layer * (HO_W * HO_H) + sy * HO_W + sx;
+    return higherOrderTables[idx];
+}
 
 const collectorPosition = vec3f(1,1,1);
 const sunDir = normalize(vec3<f32>(0.5, 1.0, 0.3));
@@ -132,7 +150,9 @@ fn mu_V_to_uv(order: i32, mu_V: f32) -> f32 {
 
 // theta effectively translates to phi_V... I think
 fn theta_to_uv(order: i32, theta: f32) -> f32 {
-    return (theta+1)/2;
+    // return (theta+1)/2;
+    // return theta / PI;
+    return (cos(theta) + 1.0) * 0.5;
 }
 
 // Mu_L is only the upper half of the angle range as the light source is assumed to be above the cloud
@@ -152,17 +172,19 @@ fn t_to_uv(order: i32, t: f32) -> f32 {
     }
 }
 
+// Helper function to convert normalized UV coordinates to texture coordinates
+// uvToTexCoord removed — sampling now uses packed float tables via sampleFromTable()
+
 // When indexing the texture array, the array is laid out as such
 // | A | B1 | B2 | C | D | P | X |
 // Each of these sections is 7 images (1,2,3,4-5,6-8,9-14) orders of scattering
 
-// Clips input values and samples texture P at the specified index. Texture X has to do with the peak values of the scattering.
+// Clips input values and samples texture A at the specified index. Texture A has to do with the peak values of the scattering.
 fn sampleTexA(order: i32, t:f32, mu_V: f32) -> f32 {
     var uv = vec2f(0);
     uv[0] = t_to_uv(order, t);
     uv[1] = mu_V_to_uv(order, mu_V);
-
-    return textureSample(higherOrderTextures, texSampler, uv, order)[0];
+    return sampleFromTable(u32(order), uv);
 }
 
 // Clips input values and samples textures B1 and B2 at the specified index. (B1 - B2) corresponds with Peak Location.
@@ -175,8 +197,10 @@ fn sampleTexB(order: i32, t: f32, mu_V: f32, mu_L: f32) -> f32 {
     uv1[1] = mu_V_to_uv(order, mu_V);
     uv2[1] = mu_L_to_uv(order, mu_L);
 
+    let idx1 = 7u + u32(order);
+    let idx2 = 14u + u32(order);
     // B1 - B2
-    return textureSample(higherOrderTextures, texSampler, uv1, 7 + order)[0] - textureSample(higherOrderTextures, texSampler, uv2, 14 + order)[0];
+    return sampleFromTable(idx1, uv1) - sampleFromTable(idx2, uv2);
 }
 
 // Clips input values and samples texture C at the specified index. C corresponds with Broadness.
@@ -184,8 +208,8 @@ fn sampleTexC(order: i32, t:f32, mu_V: f32) -> f32 {
     var uv = vec2f(0);
     uv[0] = t_to_uv(order, t);
     uv[1] = mu_V_to_uv(order, mu_V);
-
-    return textureSample(higherOrderTextures, texSampler, uv, 21 + order)[0];
+    let idx = 21u + u32(order);
+    return sampleFromTable(idx, uv);
 }
 
 // Clips input values and samples texture D at the specified index. D corresponds with Lograrithmic Behaviour.
@@ -193,8 +217,8 @@ fn sampleTexD(order: i32, t: f32, mu_V: f32) -> f32 {
     var uv = vec2f(0);
     uv[0] = t_to_uv(order, t);
     uv[1] = mu_V_to_uv(order, mu_V);
-
-    return textureSample(higherOrderTextures, texSampler, uv, 28 + order)[0];
+    let idx = 28u + u32(order);
+    return sampleFromTable(idx, uv);
 }
 
 // Clips input values and samples texture P at the specified index. P corresponds with the overall Anisotropy of the scattering. 
@@ -202,8 +226,8 @@ fn sampleTexP(order: i32, t:f32, theta: f32) -> f32 {
     var uv = vec2f(0);
     uv[0] = t_to_uv(order, t);
     uv[1] = theta_to_uv(order, theta);
-
-    return textureSample(higherOrderTextures, texSampler, uv, 35 + order)[0];
+    let idx = 35u + u32(order);
+    return sampleFromTable(idx, uv);
 }
 
 // Clips input values and samples texture X at the specified index. Texture X has to do with the peak values of the scattering.
@@ -211,17 +235,34 @@ fn sampleTexX(order: i32, t:f32, mu_L: f32) -> f32 {
     var uv = vec2f(0);
     uv[0] = t_to_uv(order, t);
     uv[1] = mu_L_to_uv(order, mu_L);
-
-    return textureSample(higherOrderTextures, texSampler, uv, 42 + order)[0];
+    let idx = 42u + u32(order);
+    return sampleFromTable(idx, uv);
 }
 
 // TODO: Find depth of cloud mesh from every given point
-fn bouthorsScattering(position: vec3<f32>, sunDir: vec3<f32>, normal: vec3<f32>) -> f32 {
+fn bouthorsScattering(position: vec3<f32>, sunDir: vec3<f32>, normal: vec3<f32>, rayDirection: vec3<f32>) -> f32 {
     // hardcoded collector position. Should be changed in full algo but for presentation we can work with this
     var collectorAreaPosition = collectorPosition;
-    var collectorAreaNormal = vec3f(1,1,1);    
+    var collectorAreaNormal = normalize(vec3f(1,1,1));   
 
-    var t = 250.0;
+    // fake find the collector area position by just putting it directly above the intersection point
+    let intersectionRayOrigin = position + vec3f(0, 1, 0) * EPSILON; // offset by epsilon to avoid self intersection
+    let intersectionRay = Ray(intersectionRayOrigin, vec3f(0,1,0));
+    let intersection = intersectMesh(intersectionRay, cloudMesh);
+    if (intersection.distance != Infinity) {
+        collectorAreaPosition = intersectionRayOrigin + vec3f(0, 1, 0) * intersection.distance;
+        collectorAreaNormal = intersection.normal;
+    }
+
+    var transport = 0.0f;
+
+    // find slab thickness by casting ray from position going through more
+    let slabRay = Ray(position + rayDirection * EPSILON, rayDirection);
+    let slabIntersection = intersectMesh(slabRay, cloudMesh);
+    var slabThickness = 1000.0f;
+    if (slabIntersection.distance != Infinity) {
+        slabThickness = slabIntersection.distance;
+    }
 
     // When indexing the texture array, the array is laid out as such
     // | A | B1 | B2 | C | D | P | X |
@@ -232,25 +273,27 @@ fn bouthorsScattering(position: vec3<f32>, sunDir: vec3<f32>, normal: vec3<f32>)
         // TODO
 
         // get 5 parameters from collector
-        let deltaStruct = getCollectorDelta(position, normal, sunDir, collectorAreaPosition, collectorAreaNormal);
+        let omega_V = normalize(camera.position - position);
+        let deltaStruct = getCollectorDelta(position, omega_V, sunDir, collectorAreaPosition, collectorAreaNormal);
 
         let mu_V = cos(deltaStruct.phi_V);
         let mu_L = cos(deltaStruct.phi_L);
-        let theta = deltaStruct.psi_V;
+        // let theta = deltaStruct.psi_V;
+        let theta = acos(clamp(dot(normalize(omega_V), normalize(sunDir)), -1.0, 1.0));
 
         // sample from texture arrays based on those parameters and sum them into the final light transport T
         // This is the first equation in section 5.2 of the paper
-        let a = sampleTexA(i, t, mu_V);
-        let b = sampleTexB(i, t, mu_V, mu_L);
-        let c = sampleTexC(i, t, mu_V);
-        let d = sampleTexD(i, t, mu_V);
-        let p = sampleTexP(i, t, theta);
-        let x = sampleTexX(i, t, mu_L);
+        let a = sampleTexA(i, slabThickness, mu_V);
+        let b = sampleTexB(i, slabThickness, mu_V, mu_L);
+        let c = sampleTexC(i, slabThickness, mu_V);
+        let d = sampleTexD(i, slabThickness, mu_V);
+        let p = sampleTexP(i, slabThickness, theta);
+        let x = sampleTexX(i, slabThickness, mu_L);
 
         let t_for_order = p * a * x * mu_L * ((log(deltaStruct.d + d))/(log(b + d))) * exp(-1 * (pow(deltaStruct.d - b,2.0)/pow(2 * c,2.0)));
-        t += t_for_order;
+        transport += t_for_order;
     }
-    return t;
+    return transport;
 }
 
 // PCG random number generator state
@@ -392,196 +435,69 @@ fn worleyFbm(p: vec3<f32>) -> f32 {
     return value;
 }
 
-// ============= Cloud Volume Functions =============
-
-// Mie scattering approximation
-fn henyeyGreenstein(cosTheta: f32, g: f32) -> f32 {
-    let g2 = g * g;
-    let denom = 1.0 + g2 - 2.0 * g * cosTheta;
-    return (1.0 - g2) / (4.0 * PI * pow(denom, 1.5));
-}
-
-// Cloud density function - uses noise within sphere bounds
-fn cloudDensityAtPoint(pos: vec3<f32>) -> f32 {
-    let expandMin = cloudMesh.boundsMin - vec3<f32>(cloudMesh.shellThickness);
-    let expandMax = cloudMesh.boundsMax + vec3<f32>(cloudMesh.shellThickness);
-    if (any(pos < expandMin) || any(pos > expandMax)) {
-        return 0.0;
+fn intersectTriangle(ray: Ray, triangle: Triangle) -> Intersection {
+    let edge1 = triangle.v1 - triangle.v0;
+    let edge2 = triangle.v2 - triangle.v0;
+    let h = cross(ray.direction, edge2);
+    let a = dot(edge1, h);
+    if (abs(a) < EPSILON) {
+        return NoIntersection; // Ray is parallel to triangle
     }
-
-    let dist = distanceToMesh(pos);
-    if (dist > cloudMesh.shellThickness) {
-        return 0.0;
+    let f = 1.0 / a;
+    let s = ray.origin - triangle.v0;
+    let u = f * dot(s, h);
+    if (u < 0.0 || u > 1.0) {
+        return NoIntersection;
     }
-
-    let surfaceFactor = 1.0 - smoothstep(0.0, cloudMesh.shellThickness, dist);
-    let time = f32(frameData.frameCount) * 0.06;
-    let windOffset = vec3<f32>(time * 0.5, time * 0.2, time * 0.3);
-    let baseNoise = fbm(pos * 0.8 + windOffset)+0.1;
-    let detail = perlin3D(pos * 2.0 + windOffset * 2.0) * 0.15;
-    let density = surfaceFactor * (baseNoise + detail);
-    return density * 10.0;
-}
-
-//legacy; for sphere-bounded cloud
-fn intersectCloudSphere(ray: Ray, center: vec3<f32>, radius: f32) -> vec2<f32> {
-    let oc = ray.origin - center;
-    let a = dot(ray.direction, ray.direction);
-    let b = 2.0 * dot(oc, ray.direction);
-    let c = dot(oc, oc) - radius * radius;
-    let discriminant = b * b - 4.0 * a * c;
-
-    if (discriminant < 0.0) {
-        return vec2<f32>(-1.0, -1.0); // No intersection
+    let q = cross(s, edge1);
+    let v = f * dot(ray.direction, q);
+    if (v < 0.0 || u + v > 1.0) {
+        return NoIntersection;
     }
-
-    let sqrtDisc = sqrt(discriminant);
-    let t1 = (-b - sqrtDisc) / (2.0 * a);
-    let t2 = (-b + sqrtDisc) / (2.0 * a);
-
-    if (t2 < 0.0) {
-        return vec2<f32>(-1.0, -1.0); // Behind camera
-    }
-
-    let tmin = max(t1, 0.0);
-    let tmax = t2;
-
-    return vec2<f32>(tmin, tmax);
-}
-
-fn sampleCloudLighting(pos: vec3<f32>, sunDir: vec3<f32>) -> f32 {
-    let lightStepSize = 0.15;
-    let lightSteps = 6;
-    var transmittance = 1.0;
-    for (var i = 0; i < lightSteps; i++) {
-        let lightPos = pos + sunDir * f32(i) * lightStepSize;
-        let density = cloudDensityAtPoint(lightPos);
-        transmittance *= exp(-density * lightStepSize * 0.8);
-        if (transmittance < 0.01) {
-            break;
+    let t = f * dot(edge2, q);
+    if (t > EPSILON) {
+        let hitPoint = ray.origin + t * ray.direction;
+        var normal = normalize(triangle.normal);
+        var isBackFace = dot(ray.direction, normal) > 0.0;
+        if (isBackFace) {
+            normal = -normal;
         }
-    }
-
-    return transmittance;
-}
-
-fn distanceToTriangle(p: vec3<f32>, tri: Triangle) -> f32 {
-    let edge0 = tri.v1 - tri.v0;
-    let edge1 = tri.v2 - tri.v0;
-    let v0p   = tri.v0 - p;
-
-    let a = dot(edge0, edge0);
-    let b = dot(edge0, edge1);
-    let c = dot(edge1, edge1);
-    let d = dot(edge0, v0p);
-    let e = dot(edge1, v0p);
-
-    let det = a * c - b * b;
-    var s = b * e - c * d;
-    var t = b * d - a * e;
-
-    if (s + t <= det) {
-        if (s < 0.0) {
-            if (t < 0.0) {
-                if (d < 0.0) { s = clamp(-d / a, 0.0, 1.0); t = 0.0; }
-                else         { s = 0.0; t = clamp(-e / c, 0.0, 1.0); }
-            } else {
-                s = 0.0; t = clamp(-e / c, 0.0, 1.0);
-            }
-        } else if (t < 0.0) {
-            s = clamp(-d / a, 0.0, 1.0); t = 0.0;
-        } else {
-            let invDet = 1.0 / det;
-            s = s * invDet; t = t * invDet;
-        }
+        return Intersection(t, normal, isBackFace, NoMaterial);
     } else {
-        if (s < 0.0) {
-            let tmp0 = b + d;
-            let tmp1 = c + e;
-            if (tmp1 > tmp0) {
-                let numer = tmp1 - tmp0;
-                let denom = a - 2.0 * b + c;
-                s = clamp(numer / denom, 0.0, 1.0); t = 1.0 - s;
-            } else {
-                s = 0.0; t = clamp(-e / c, 0.0, 1.0);
-            }
-        } else if (t < 0.0) {
-            let tmp0 = b + e;
-            let tmp1 = a + d;
-            if (tmp1 > tmp0) {
-                let numer = tmp1 - tmp0;
-                let denom = a - 2.0 * b + c;
-                t = clamp(numer / denom, 0.0, 1.0); s = 1.0 - t;
-            } else {
-                t = 0.0; s = clamp(-d / a, 0.0, 1.0);
-            }
-        } else {
-            let numer = c + e - b - d;
-            if (numer <= 0.0) { s = 0.0; }
-            else {
-                let denom = a - 2.0 * b + c;
-                s = clamp(numer / denom, 0.0, 1.0);
-            }
-            t = 1.0 - s;
+        return NoIntersection; // Line intersection but not a ray intersection
+    }
+}
+
+fn intersectMesh(ray: Ray, mesh: CloudMesh) -> Intersection {
+    var closestIntersection = NoIntersection;
+    for (var i = 0u; i < mesh.triangleCount; i++) {
+        let triangle = triangles[mesh.triangleOffset + i];
+        let intersection = intersectTriangle(ray, triangle);
+        if (intersection.distance < closestIntersection.distance) {
+            closestIntersection = intersection;
         }
     }
-
-    let closest = tri.v0 + s * edge0 + t * edge1;
-    return length(p - closest);
+    return closestIntersection;
 }
 
-fn distanceToMesh(p: vec3<f32>) -> f32 {
-    var minDist = 1e6;
-    for (var i = 0u; i < cloudMesh.triangleCount; i = i + 1u) {
-        let d = distanceToTriangle(p, triangles[cloudMesh.triangleOffset + i]);
-        minDist = min(minDist, d);
+fn getSkyBoxColor(ray: Ray) -> vec3<f32> {
+    // top == mid blue, ground == brown, horizon == sharp cutoff of ground, but gradient from light blue to top of mid blue
+    let t = 0.5 * (ray.direction.y + 1.0);
+    if (ray.direction.y < 0.0) {
+        return mix(vec3<f32>(0.39, 0.25, 0.09), vec3<f32>(0.7, 0.8, 1.0), t);
+    } else {
+        return mix(vec3<f32>(0.7, 0.8, 1.0), vec3<f32>(1.0, 0.9, 1.0), t);
     }
-    return minDist;
 }
 
-fn intersectAABB(ray: Ray, bMin: vec3<f32>, bMax: vec3<f32>) -> vec2<f32> {
-    let invDir = 1.0 / ray.direction;
-    let t0 = (bMin - ray.origin) * invDir;
-    let t1 = (bMax - ray.origin) * invDir;
-    let tmin = min(t0, t1);
-    let tmax = max(t0, t1);
-    let tNear = max(max(tmin.x, tmin.y), tmin.z);
-    let tFar  = min(min(tmax.x, tmax.y), tmax.z);
-    if (tNear > tFar || tFar < 0.0) {
-        return vec2<f32>(-1.0, -1.0);
-    }
-    return vec2<f32>(max(tNear, 0.0), tFar);
-}
+// fn intersectEnvironment(ray: Ray) -> Intersection {
+//     let groundIntersection = intersectGridGround(ray);
+//     if (groundIntersection.distance < NoIntersection.distance) {
+//         return groundIntersection;
+//     }
+//     return NoIntersection;
+// }
 
-fn raymarchCloudMesh(ray: Ray, tmin: f32, tmax: f32) -> vec4<f32> {
-    let sunColor = vec3<f32>(1.2,1.2,1.2) * 15.0;
-    let ambientColor = vec3<f32>(1.2, 1.0,1.0);
-    let stepSize = 0.025;
-    let extinction = 0.8;
-    let scattering = 1.5;
-    let g = 0.7;
-
-    var color = vec3<f32>(0.0);
-    var transmittance = 1.0;
-    var t = tmin;
-
-    while (t < tmax && transmittance > 0.01) {
-        let pos = ray.origin + ray.direction * t;
-        let density = cloudDensityAtPoint(pos);
-        if (density > 0.001) {
-            let sampleT = exp(-density * stepSize * extinction);
-            let cosTheta = dot(ray.direction, sunDir);
-            let phase = henyeyGreenstein(cosTheta, g);
-            let lightEnergy = sampleCloudLighting(pos, sunDir);
-            let scattered = sunColor * density * scattering * phase * lightEnergy;
-            let ambient = ambientColor * density * 0.5;
-            color += (scattered + ambient) * transmittance * stepSize;
-            transmittance *= sampleT;
-        }
-        t += stepSize;
-    }
-    return vec4<f32>(color, 1.0 - transmittance);
-}
 
 fn createRay(uv : vec2<f32>, size : vec2<f32>) -> Ray {
     // ndc
@@ -623,57 +539,6 @@ fn createRay(uv : vec2<f32>, size : vec2<f32>) -> Ray {
     return Ray(camera.position, dir);
 }
 
-fn intersectSphere(ray : Ray, sphere : Sphere) -> Intersection {
-    let oc = ray.origin - sphere.center;
-    let a = dot(ray.direction, ray.direction);
-    let b = 2.0 * dot(oc, ray.direction);
-    let c = dot(oc, oc) - sphere.radius * sphere.radius;
-    let discriminant = b*b - 4.0*a*c;
-    if (discriminant < 0.0) {
-        return NoIntersection;
-    } else {
-        let t1 = (-b + sqrt(discriminant)) / (2.0*a);
-        let t2 = (-b - sqrt(discriminant)) / (2.0*a);
-        let minT = min(t1, t2);
-        let maxT = max(t1, t2);
-
-        // Use the closest positive t value
-        var t = minT;
-        if (t < EPSILON) {
-            t = maxT;
-        }
-        if (t < EPSILON) {
-            return NoIntersection;
-        }
-
-        let hitPoint = ray.origin + t * ray.direction;
-        var normal = normalize(hitPoint - sphere.center);
-        var isBackFace = dot(ray.direction, normal) > 0.0;
-        if (isBackFace) {
-            normal = -normal;
-        }
-        return Intersection(t, normal, isBackFace, sphere.material);
-    }
-}
-
-fn intersectWorld(ray : Ray) -> Intersection {
-    var closestIntersection = NoIntersection;
-    for (var i = 0u; i < 2u; i++) {
-        let sphere = world.spheres[i];
-        let intersection = intersectSphere(ray, sphere);
-        if (intersection.distance < closestIntersection.distance) {
-            closestIntersection = intersection;
-        }
-    }
-
-    let groundIntersection = intersectGridGround(ray);
-    if (groundIntersection.distance < closestIntersection.distance) {
-        closestIntersection = groundIntersection;
-    }
-
-    return closestIntersection;
-}
-
 fn intersectGridGround(ray : Ray) -> Intersection {
     let t = (GroundYLevel - ray.origin.y) / ray.direction.y;
     if (t > 0.0) {
@@ -691,105 +556,59 @@ fn intersectGridGround(ray : Ray) -> Intersection {
     }
 }
 
-fn getSkyBoxColor(ray : Ray) -> vec3<f32> {
-    let t = 0.5 * (ray.direction.y + 1.0);
-    return mix(vec3<f32>(1.0, 0.9, 1.0), vec3<f32>(0.7, 0.8, 1.0), t);
-}
-
 fn calculateLight(ray : Ray, intersection : Intersection) -> vec3<f32> {
-    var lightColor = vec3<f32>(0.0);
-    for (var i = 0u; i < 2u; i++) {
-        let sphere = world.spheres[i];
-        if (sphere.material.emission > 0.0) {
-            let lightDir = normalize(sphere.center - intersection.distance * ray.direction + ray.origin);
-            let lightDist = distance(sphere.center, intersection.distance * ray.direction + ray.origin);
-            let shadowRay = Ray(intersection.distance * ray.direction + ray.origin, lightDir);
-            let shadowIntersection = intersectWorld(shadowRay);
-            if (shadowIntersection.distance > lightDist) {
-                let diffuse = max(dot(intersection.normal, lightDir), 0.0);
-                lightColor += sphere.material.emissionColor * diffuse / (lightDist * lightDist);
-                // Bouthors Scattering
-                let intersectionPoint = ray.origin + (ray.direction * intersection.distance);
-                lightColor += bouthorsScattering(intersectionPoint, sunDir,intersection.normal);
-            }
-        }
-    }
+    let intersectionPosition = ray.origin + ray.direction * intersection.distance;
+    
+    // // DEBUG: Test table sampling directly
+    // let testVal = sampleFromTable(0u, vec2<f32>(0.5, 0.5));
+    
+    // // If testVal is 0 or NaN, tables aren't loaded
+    // if (testVal <= 0.0 || testVal != testVal) {
+    //     return vec3<f32>(0.5, 0.0, 0.0); // Red = table data error
+    // }
+    
+    // offset normal by perlin noise for more interesting visuals
+    let noise = perlin3D(intersectionPosition) * 0.5 + 0.5; // + vec3<f32>(0.0, frameData.frameCount as f32 * 0.01, 0.0)) * 0.5 + 0.5;
+    let perturbedNormal = normalize(intersection.normal + (noise - 0.5) * 0.5);
+    // return vec3<f32>(noise); // Green = normal noise visualization
 
-    return lightColor;
-}
+    let light = bouthorsScattering(intersectionPosition, sunDir, perturbedNormal, ray.direction);
+    
+    // // // Clamp to [0,1] for visualization
+    // // let normalized = clamp(light / 1000.0, 0.0, 1.0);
+    // // return vec3<f32>(normalized);
 
-fn getNextRay(ray : Ray, intersection : Intersection) -> Ray {
-    if (intersection.material.refractiveIndex > 0.0) {
-        return calculateRefractedRay(ray, intersection);
-    }
-    let reflectionDir = hemisphereRandom(intersection.normal);
-    var newOrigin = intersection.distance * ray.direction + ray.origin;
-    newOrigin += intersection.normal * EPSILON;
-    return Ray(newOrigin, reflectionDir);
-}
-
-fn calculateRefractedRay(ray : Ray, intersection : Intersection) -> Ray {
-    var n1 = 1.0;
-    var n2 = intersection.material.refractiveIndex;
-    if (intersection.isBackFace) {
-        n2 = 1.0;
-        n1 = intersection.material.refractiveIndex;
-    }
-
-    let n = n1 / n2;
-    let cosI = -dot(intersection.normal, ray.direction);
-    let sinT2 = n * n * (1.0 - cosI * cosI);
-    if (sinT2 > 1.0) {
-        let reflectDir = reflect(ray.direction, intersection.normal);
-        var newOrigin = intersection.distance * ray.direction + ray.origin;
-        newOrigin += intersection.normal * EPSILON;
-        return Ray(newOrigin, reflectDir);
-    } else {
-        let cosT = sqrt(1.0 - sinT2);
-        let refractDir = n * ray.direction + (n * cosI - cosT) * intersection.normal;
-        var newOrigin = intersection.distance * ray.direction + ray.origin;
-        newOrigin -= intersection.normal * EPSILON;
-        return Ray(newOrigin, refractDir);
-    }
-}
-
-fn hemisphereRandom(normal : vec3<f32>) -> vec3<f32> {
-    let u1 = randomFloat();
-    let u2 = randomFloat();
-
-    let r = sqrt(u1);
-    let theta = 2.0 * PI * u2;
-
-    let x = r * cos(theta);
-    let y = r * sin(theta);
-    let z = sqrt(max(0.0, 1.0 - u1));
-
-    var tangent : vec3<f32>;
-    if (abs(normal.x) > abs(normal.z)) {
-        tangent = normalize(vec3<f32>(-normal.y, normal.x, 0.0));
-    } else {
-        tangent = normalize(vec3<f32>(0.0, -normal.z, normal.y));
-    }
-    let bitangent = cross(normal, tangent);
-
-    return normalize(x * tangent + y * bitangent + z * normal);
+    return vec3<f32>(light); // Scale down for visualization
 }
 
 fn castRay(ray: Ray) -> vec3<f32> {
     var radiance = vec3<f32>(0.0);
     var throughput = vec3<f32>(1.0);
 
-    let expandMin = cloudMesh.boundsMin - vec3<f32>(cloudMesh.shellThickness);
-    let expandMax = cloudMesh.boundsMax + vec3<f32>(cloudMesh.shellThickness);
-    let hit = intersectAABB(ray, expandMin, expandMax);
+    // if (hit.x >= 0.0) {
+    //     let result = raymarchCloudMesh(ray, hit.x, hit.y);
+    //     radiance += result.rgb * throughput;
+    //     throughput *= (1.0 - result.a);
+    // }
 
-    if (hit.x >= 0.0) {
-        let result = raymarchCloudMesh(ray, hit.x, hit.y);
-        radiance += result.rgb * throughput;
-        throughput *= (1.0 - result.a);
+    // radiance += getSkyBoxColor(ray) * throughput;
+    // return radiance;
+
+    // for (var bounce = 0u; bounce < settings.maxBounces; bounce++) {
+    let intersection = intersectMesh(ray, cloudMesh);
+    if (intersection.distance == Infinity) {
+        radiance += getSkyBoxColor(ray) * throughput;
+        return radiance;
     }
 
-    radiance += getSkyBoxColor(ray) * throughput;
+    radiance += calculateLight(ray, intersection) * throughput;
+
+        // // For simplicity, we only handle diffuse reflection here
+        // let newDir = normalize(intersection.normal + randomUnitVector());
+        // ray = Ray(ray.origin + ray.direction * intersection.distance + intersection.normal * EPSILON, newDir);
+        // throughput *= 0.5; // Assume 50% energy loss on each bounce
+    // }
+
     return radiance;
 }
 

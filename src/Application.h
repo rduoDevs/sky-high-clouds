@@ -125,6 +125,7 @@ class Application {
     wgpu::Buffer m_triangleBuffer;
     uint32_t   m_triangleCount = 0;
     wgpu::Buffer m_cloudMeshBuffer;
+    wgpu::Buffer m_higherOrderTableBuffer;
     wgpu::Texture m_higherOrderTexture;
     wgpu::TextureView m_higherOrderTextureView;
     wgpu::Sampler m_texSampler;
