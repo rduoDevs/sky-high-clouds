@@ -573,6 +573,28 @@ void Application::onGui(RenderPassEncoder renderPass) {
     const float frameMs = (fps > 0.0f) ? (1000.0f / fps) : 0.0f;
     ImGui::Text("FPS: %.1f", fps);
     ImGui::Text("Frame time: %.3f ms", frameMs);
+
+    ImGui::SeparatorText("Scattering Orders");
+    for (uint32_t i = 0; i < 7; ++i) {
+        const uint32_t bit = (1u << i);
+        const bool enabled = (m_raySettingsData.scatteringOrderMask & bit) != 0u;
+        std::string label = "Order " + std::to_string(i + 1);
+        if (ImGui::RadioButton(label.c_str(), enabled)) {
+            uint32_t nextMask = m_raySettingsData.scatteringOrderMask ^ bit;
+            // Keep at least one order enabled.
+            if (nextMask == 0u) {
+                nextMask = bit;
+            }
+            if (nextMask != m_raySettingsData.scatteringOrderMask) {
+                m_raySettingsData.scatteringOrderMask = nextMask;
+                m_frameCount = 0;
+            }
+        }
+        if (i < 6 && (i % 4) != 3) {
+            ImGui::SameLine();
+        }
+    }
+
     if (ImGui::Button("Save Output")) {
         // TODO: Implement texture saving
         std::cout << "Save output not yet implemented" << std::endl;
@@ -591,6 +613,8 @@ void Application::onCompute() {
 
     FrameCountData frameData = {m_frameCount, {0, 0, 0}};
     m_queue.WriteBuffer(m_frameCountBuffer, 0, &frameData, sizeof(frameData));
+    m_queue.WriteBuffer(m_settingsBuffer, 0, &m_raySettingsData,
+                        sizeof(m_raySettingsData));
 
     if (m_cameraDataUpdated) {
         m_queue.WriteBuffer(m_uniformBuffer, 0, &m_cameraData,

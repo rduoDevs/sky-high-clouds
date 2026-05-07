@@ -59,10 +59,11 @@ void Application::initBuffers() {
 
     // world.spheres[2].centerRadius = glm::vec4(0.5f, 0.2f, -1.0f, 0.5f);
 
-    const RaySettingsData raySettings = {
+    m_raySettingsData = {
         .maxBounces = 2,
         .antiAliasingSamples = 1,
-        ._pad = {0, 0},
+        .scatteringOrderMask = 0x7Fu,
+        ._pad = 0,
     };
 
     const FrameCountData frameData = {.frameCount = 0, ._pad = {0, 0, 0}};
@@ -251,7 +252,8 @@ void Application::initBuffers() {
     m_queue.WriteBuffer(m_uniformBuffer, 0, &m_cameraData,
                         sizeof(m_cameraData));
     m_queue.WriteBuffer(m_worldBuffer, 0, &world, sizeof(world));
-    m_queue.WriteBuffer(m_settingsBuffer, 0, &raySettings, sizeof(raySettings));
+    m_queue.WriteBuffer(m_settingsBuffer, 0, &m_raySettingsData,
+                        sizeof(m_raySettingsData));
     m_queue.WriteBuffer(m_frameCountBuffer, 0, &frameData, sizeof(frameData));
 }
 

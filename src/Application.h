@@ -113,6 +113,7 @@ class Application {
     double m_lastMouseY = 0.0;
     bool m_keys[GLFW_KEY_LAST + 1] = {};  // GLFW key state tracking
     CameraData m_cameraData;
+    RaySettingsData m_raySettingsData{};
     float m_moveSpeed = 1.0f;
     float m_rotateSpeed = 0.002f;
     double m_lastFrameTime = 0.0;
