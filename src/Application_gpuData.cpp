@@ -3,6 +3,7 @@
 #include "gpuData.h"
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
+#include "Bouthors_Texture_Definitions.h"
 
 
 void Application::initBuffers() {

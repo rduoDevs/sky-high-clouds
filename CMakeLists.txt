@@ -113,6 +113,7 @@ add_executable(${PROJECT_NAME}
     resources/ray.wgsl
     resources/present.wgsl
     src/tiny_obj_loader.h
+    src/Bouthors_Texture_Definitions.h
 
 )
 
