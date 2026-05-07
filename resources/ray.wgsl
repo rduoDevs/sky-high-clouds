@@ -1,6 +1,12 @@
-//==============================================================================
-// COMPLETE BOUTHORS CLOUD RENDERING IMPLEMENTATION
-//==============================================================================
+// =============================================================================
+//  Interactive Multiple Anisotropic Scattering in Clouds
+//  Bouthors et al., I3D 2008
+//  WGSL Compute Shader Implementation
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+//  Structs (from binding layout)
+// ---------------------------------------------------------------------------
 
 struct Camera {
     position : vec3<f32>,
@@ -9,17 +15,17 @@ struct Camera {
 };
 
 struct Material {
-    color : vec3<f32>,
-    smoothness : f32,
-    specular : f32,
-    emission : f32,
+    color         : vec3<f32>,
+    smoothness    : f32,
+    specular      : f32,
+    emission      : f32,
     emissionColor : vec3<f32>,
     refractiveIndex : f32
 };
 
 struct Sphere {
-    center : vec3<f32>,
-    radius : f32,
+    center   : vec3<f32>,
+    radius   : f32,
     material : Material
 };
 
@@ -35,495 +41,707 @@ struct FrameUniform {
 };
 
 struct Ray {
-    origin : vec3<f32>,
+    origin    : vec3<f32>,
     direction : vec3<f32>
 };
 
 struct Intersection {
-    distance : f32,
-    normal : vec3<f32>,
+    distance  : f32,
+    normal    : vec3<f32>,
     isBackFace : bool,
-    material : Material
+    material  : Material
 };
 
 struct Settings {
-    maxBounces : u32,
+    maxBounces          : u32,
     antiAliasingSamples : u32,
-    pad_0 : u32,
-    pad_1 : u32
+    scatteringOrderMask : u32,
+    pad_0               : u32
 };
 
 struct Triangle {
-    v0: vec3<f32>, pad0: f32,
-    v1: vec3<f32>, pad1: f32,
-    v2: vec3<f32>, pad2: f32,
-    normal: vec3<f32>, pad3: f32
+    v0 : vec3<f32>, pad0 : f32,
+    v1 : vec3<f32>, pad1 : f32,
+    v2 : vec3<f32>, pad2 : f32,
+    normal : vec3<f32>, pad3 : f32
 };
 
 struct CloudMesh {
-    boundsMin: vec3<f32>, pad0: f32,
-    boundsMax: vec3<f32>, pad1: f32,
-    triangleOffset: u32,
-    triangleCount: u32,
-    shellThickness: f32,
-    pad2: f32
+    boundsMin      : vec3<f32>, pad0 : f32,
+    boundsMax      : vec3<f32>, pad1 : f32,
+    triangleOffset : u32,
+    triangleCount  : u32,
+    shellThickness : f32,   // depth h of hypertexture layer (Section 8)
+    pad2           : f32
 };
 
-//==============================================================================
-// CONSTANTS
-//==============================================================================
-const Infinity = 1e6;
-const EPSILON = 1e-4;
-const PI = 3.14159265359;
+// ---------------------------------------------------------------------------
+//  Bindings
+// ---------------------------------------------------------------------------
 
-const GroundYLevel = -1.0;
+@group(0) @binding(0) var<uniform>          camera          : Camera;
+@group(0) @binding(1) var<storage, read>    world           : World;
+@group(0) @binding(2) var                   outputTex       : texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(3) var<uniform>          settings        : Settings;
+@group(0) @binding(4) var<uniform>          frameData       : FrameUniform;
+@group(0) @binding(5) var<storage, read>    triangles       : array<Triangle>;
+@group(0) @binding(6) var<uniform>          cloudMesh       : CloudMesh;
+@group(0) @binding(7) var<storage, read>    higherOrderTables : array<f32>;
 
-const NoMaterial = Material(vec3<f32>(0.0), 0.0, 0.0, 0.0, vec3<f32>(0.0), 0.0);
-const GroundMaterial1 = Material(vec3<f32>(0.39, 0.25, 0.09), 0.0, 0.0, 0.0, vec3<f32>(0.0), 0.0);
-const GroundMaterial2 = Material(vec3<f32>(0.0, 0.39, 0.0), 0.0, 0.0, 0.0, vec3<f32>(0.0), 0.0);
-const NoIntersection = Intersection(Infinity, vec3<f32>(0.0), false, NoMaterial);
+// ---------------------------------------------------------------------------
+//  Constants
+// ---------------------------------------------------------------------------
 
-//==============================================================================
-// BINDINGS
-//==============================================================================
-@group(0) @binding(0) var<uniform> camera : Camera;
-@group(0) @binding(1) var<storage, read> world : World;
-@group(0) @binding(2) var outputTex : texture_storage_2d<rgba8unorm, write>;
-@group(0) @binding(3) var<uniform> settings : Settings;
-@group(0) @binding(4) var<uniform> frameData : FrameUniform;
-@group(0) @binding(5) var<storage, read> triangles: array<Triangle>;
-@group(0) @binding(6) var<uniform> cloudMesh: CloudMesh;
-@group(0) @binding(7) var<storage, read> higherOrderTables: array<f32>;
+const Infinity        = 1e6f;
+const GroundYLevel    = -1.0f;
+const EPSILON         = 1e-4f;
+const PI              = 3.14159265359f;
+const TWO_PI          = 6.28318530718f;
 
-//==============================================================================
-// TABLE SAMPLING CONFIGURATION
-//==============================================================================
-const HO_W: u32 = 64u;
-const HO_H: u32 = 64u;
-const HO_LAYER_COUNT: u32 = 49u;
+// Typical cumulus optical parameters (Appendix A)
+// effective radius re = 6 µm, extinction κ = N0 π re²
+// For rendering we work in scene units; κ is normalised per unit density
+const KAPPA_BASE      = 0.05f;   // extinction coefficient (scene-unit normalised)
+const MIE_G           = 0.85f;   // asymmetry parameter for Henyey-Greenstein lobe
 
-// Table layout for each scattering order set (0-6 for orders 1-30+)
-// | A | B1 | B2 | C | D | P | X |
-// Each has 7 textures
-const TABLE_A_OFFSET: u32 = 0u;
-const TABLE_B1_OFFSET: u32 = 7u;
-const TABLE_B2_OFFSET: u32 = 14u;
-const TABLE_C_OFFSET: u32 = 21u;
-const TABLE_D_OFFSET: u32 = 28u;
-const TABLE_P_OFFSET: u32 = 35u;
-const TABLE_X_OFFSET: u32 = 42u;
+// Scattering-order sets (Section 4)
+// Index 0 → orders 2        (set index for multiple scattering)
+// Index 1 → orders 3-4
+// Index 2 → orders 5-6
+// Index 3 → orders 7-8
+// Index 4 → orders 9-12
+// Index 5 → orders 13-18
+// Index 6 → orders 19-30
+// Index 7 → orders 31-∞  (isotropic)
+const NUM_MS_SETS     = 8u;
 
-//==============================================================================
-// RANDOM NUMBER GENERATION
-//==============================================================================
-var<private> rngState: u32;
+// Sun direction (world space, normalised, pointing toward sun)
+const SUN_DIR         = vec3<f32>(0.577, 0.816, 0.0);
+const SUN_COLOR       = vec3<f32>(1.0, 0.97, 0.9);
+const SUN_INTENSITY   = 3.0f;
+// Sky dome colours (environment illumination, Section 8.1)
+const SKY_COLOR_TOP   = vec3<f32>(0.35, 0.55, 0.95);
+const SKY_COLOR_BOT   = vec3<f32>(0.7, 0.6, 0.5);
 
-fn initRNG(seed: u32) {
-    rngState = seed;
-}
+// ---------------------------------------------------------------------------
+//  Random / noise utilities
+// ---------------------------------------------------------------------------
 
-fn pcgHash(input: u32) -> u32 {
-    var state = input * 747796405u + 2891336453u;
-    var word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+fn pcg(v: u32) -> u32 {
+    let state = v * 747796405u + 2891336453u;
+    let word  = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
     return (word >> 22u) ^ word;
 }
 
-fn randomFloat() -> f32 {
-    rngState = pcgHash(rngState);
-    return f32(rngState) / 4294967296.0;
+fn rand2(seed: ptr<function, u32>) -> vec2<f32> {
+    *seed = pcg(*seed);
+    let a = *seed;
+    *seed = pcg(*seed);
+    let b = *seed;
+    return vec2<f32>(f32(a) / 4294967296.0, f32(b) / 4294967296.0);
 }
 
-fn randomFloatRange(min: f32, max: f32) -> f32 {
-    return min + (max - min) * randomFloat();
+fn rand1(seed: ptr<function, u32>) -> f32 {
+    *seed = pcg(*seed);
+    return f32(*seed) / 4294967296.0;
 }
 
-//==============================================================================
-// UTILITY FUNCTIONS
-//==============================================================================
-fn sampleFromTable(layer: u32, uv: vec2<f32>) -> f32 {
-    let u = clamp(uv.x, 0.0, 1.0);
-    let v = clamp(uv.y, 0.0, 1.0);
-    let x = min(u32(floor(u * f32(HO_W))), HO_W - 1u);
-    let y = min(u32(floor(v * f32(HO_H))), HO_H - 1u);
-    let idx = layer * (HO_W * HO_H) + y * HO_W + x;
-    return higherOrderTables[idx];
+// Simple 3D value noise (used for Hypertexture Perlin-style noise, Section 8)
+fn hash3(p: vec3<f32>) -> f32 {
+    var q = fract(p * vec3<f32>(127.1, 311.7, 74.7));
+    q += dot(q, q.yxz + vec3<f32>(19.19));
+    return fract((q.x + q.y) * q.z);
 }
 
-fn tToUv(orderSet: i32, t: f32) -> f32 {
-    // Map slab thickness to UV based on order set (from paper)
-    if (orderSet < 3) {
-        return clamp((t - 50.0) / 450.0, 0.0, 1.0);
-    } else if (orderSet < 5) {
-        return clamp((t - 10.0) / 490.0, 0.0, 1.0);
-    } else if (orderSet < 6) {
-        return clamp((t - 50.0) / 950.0, 0.0, 1.0);
-    } else {
-        return clamp((t - 50.0) / 4950.0, 0.0, 1.0);
+fn smoothNoise3(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    return mix(
+        mix(mix(hash3(i + vec3<f32>(0,0,0)), hash3(i + vec3<f32>(1,0,0)), u.x),
+            mix(hash3(i + vec3<f32>(0,1,0)), hash3(i + vec3<f32>(1,1,0)), u.x), u.y),
+        mix(mix(hash3(i + vec3<f32>(0,0,1)), hash3(i + vec3<f32>(1,0,1)), u.x),
+            mix(hash3(i + vec3<f32>(0,1,1)), hash3(i + vec3<f32>(1,1,1)), u.x), u.y),
+        u.z
+    );
+}
+
+// Fractional Brownian Motion noise (Hypertexture detail noise)
+fn fbm(p: vec3<f32>) -> f32 {
+    var val = 0.0f;
+    var amp = 0.5f;
+    var freq = 1.0f;
+    for (var i = 0; i < 5; i++) {
+        val  += amp * smoothNoise3(p * freq);
+        amp  *= 0.5;
+        freq *= 2.1;
     }
+    return val;
 }
 
-fn muVToUv(orderSet: i32, mu_V: f32) -> f32 {
-    return clamp((mu_V + 1.0) / 2.0, 0.0, 1.0);
+// ---------------------------------------------------------------------------
+//  Phase functions (Section 2.2)
+// ---------------------------------------------------------------------------
+
+// Henyey-Greenstein phase function approximating the forward Mie lobe
+fn phaseHG(cosTheta: f32, g: f32) -> f32 {
+    let g2 = g * g;
+    let denom = 1.0 + g2 - 2.0 * g * cosTheta;
+    return (1.0 - g2) / (4.0 * PI * pow(denom, 1.5));
 }
 
-fn muLToUv(orderSet: i32, mu_L: f32) -> f32 {
-    return clamp((mu_L - 0.05) / 0.95, 0.0, 1.0);
+// Mie-like combined phase function (Section 2.2):
+// narrow forward peak (g~0.99, 51% weight) + wide forward lobe (g~0.85, 48%)
+// + small backward lobe accounting for glory/fogbow
+fn miePhaseFn(cosTheta: f32) -> f32 {
+    // Narrow forward peak
+    let peak    = 0.51 * phaseHG(cosTheta, 0.99);
+    // Wide forward lobe
+    let lobe    = 0.48 * phaseHG(cosTheta, 0.85);
+    // Backward component (glory/fogbow)
+    let back    = 0.01 * phaseHG(cosTheta, -0.3);
+    return peak + lobe + back;
 }
 
-fn thetaToUv(orderSet: i32, theta: f32) -> f32 {
-    return clamp((cos(theta) + 1.0) * 0.5, 0.0, 1.0);
+// RGB Mie phase (wavelength dependent for single scattering; Section 6.2)
+fn miePhaseFnRGB(cosTheta: f32) -> vec3<f32> {
+    // Slight wavelength shift to encode glory colours
+    return vec3<f32>(
+        miePhaseFn(cosTheta) * 1.0,
+        miePhaseFn(cosTheta) * 0.98,
+        miePhaseFn(cosTheta) * 0.95
+    );
 }
 
-//==============================================================================
-// TEXTURE SAMPLING FOR EACH COMPONENT
-//==============================================================================
-fn sampleTexA(orderSet: i32, t: f32, mu_V: f32) -> f32 {
-    let uv = vec2<f32>(tToUv(orderSet, t), muVToUv(orderSet, mu_V));
-    let layer = TABLE_A_OFFSET + u32(orderSet);
-    return sampleFromTable(layer, uv);
+// ---------------------------------------------------------------------------
+//  Ray-triangle intersection (Möller–Trumbore)
+// ---------------------------------------------------------------------------
+
+struct TriHit { t: f32, n: vec3<f32> };
+
+fn rayTriIntersect(ray: Ray, tri: Triangle) -> TriHit {
+    let e1 = tri.v1 - tri.v0;
+    let e2 = tri.v2 - tri.v0;
+    let h  = cross(ray.direction, e2);
+    let a  = dot(e1, h);
+    if (abs(a) < EPSILON) { return TriHit(Infinity, vec3<f32>(0.0)); }
+    let f  = 1.0 / a;
+    let s  = ray.origin - tri.v0;
+    let u  = f * dot(s, h);
+    if (u < 0.0 || u > 1.0) { return TriHit(Infinity, vec3<f32>(0.0)); }
+    let q  = cross(s, e1);
+    let v  = f * dot(ray.direction, q);
+    if (v < 0.0 || u + v > 1.0) { return TriHit(Infinity, vec3<f32>(0.0)); }
+    let t  = f * dot(e2, q);
+    if (t < EPSILON) { return TriHit(Infinity, vec3<f32>(0.0)); }
+    return TriHit(t, tri.normal);
 }
 
-fn sampleTexB1(orderSet: i32, t: f32, mu_V: f32) -> f32 {
-    let uv = vec2<f32>(tToUv(orderSet, t), muVToUv(orderSet, mu_V));
-    let layer = TABLE_B1_OFFSET + u32(orderSet);
-    return sampleFromTable(layer, uv);
-}
+// ---------------------------------------------------------------------------
+//  Cloud mesh intersection
+//  Returns (tEntry, tExit) for the outer mesh hull.
+//  Uses all triangles in [cloudMesh.triangleOffset, +triangleCount).
+// ---------------------------------------------------------------------------
 
-fn sampleTexB2(orderSet: i32, t: f32, mu_L: f32) -> f32 {
-    let uv = vec2<f32>(tToUv(orderSet, t), muLToUv(orderSet, mu_L));
-    let layer = TABLE_B2_OFFSET + u32(orderSet);
-    return sampleFromTable(layer, uv);
-}
-
-fn sampleTexC(orderSet: i32, t: f32, mu_V: f32) -> f32 {
-    let uv = vec2<f32>(tToUv(orderSet, t), muVToUv(orderSet, mu_V));
-    let layer = TABLE_C_OFFSET + u32(orderSet);
-    return sampleFromTable(layer, uv);
-}
-
-fn sampleTexD(orderSet: i32, t: f32, mu_V: f32) -> f32 {
-    let uv = vec2<f32>(tToUv(orderSet, t), muVToUv(orderSet, mu_V));
-    let layer = TABLE_D_OFFSET + u32(orderSet);
-    return sampleFromTable(layer, uv);
-}
-
-fn sampleTexP(orderSet: i32, t: f32, theta: f32) -> f32 {
-    let uv = vec2<f32>(tToUv(orderSet, t), thetaToUv(orderSet, theta));
-    let layer = TABLE_P_OFFSET + u32(orderSet);
-    return sampleFromTable(layer, uv);
-}
-
-fn sampleTexX(orderSet: i32, t: f32, mu_L: f32) -> f32 {
-    let uv = vec2<f32>(tToUv(orderSet, t), muLToUv(orderSet, mu_L));
-    let layer = TABLE_X_OFFSET + u32(orderSet);
-    return sampleFromTable(layer, uv);
-}
-
-fn sampleTexB(orderSet: i32, t: f32, mu_V: f32, mu_L: f32) -> f32 {
-    return sampleTexB1(orderSet, t, mu_V) - sampleTexB2(orderSet, t, mu_L);
-}
-
-//==============================================================================
-// RAY-TRIANGLE INTERSECTION
-//==============================================================================
-fn intersectTriangle(ray: Ray, triangle: Triangle) -> Intersection {
-    let edge1 = triangle.v1 - triangle.v0;
-    let edge2 = triangle.v2 - triangle.v0;
-    let h = cross(ray.direction, edge2);
-    let a = dot(edge1, h);
-    
-    if (abs(a) < EPSILON) {
-        return NoIntersection;
-    }
-    
-    let f = 1.0 / a;
-    let s = ray.origin - triangle.v0;
-    let u = f * dot(s, h);
-    
-    if (u < 0.0 || u > 1.0) {
-        return NoIntersection;
-    }
-    
-    let q = cross(s, edge1);
-    let v = f * dot(ray.direction, q);
-    
-    if (v < 0.0 || u + v > 1.0) {
-        return NoIntersection;
-    }
-    
-    let t = f * dot(edge2, q);
-    
-    if (t > EPSILON) {
-        let hitPoint = ray.origin + t * ray.direction;
-        var normal = normalize(triangle.normal);
-        let isBackFace = dot(ray.direction, normal) > 0.0;
-        
-        if (isBackFace) {
-            normal = -normal;
-        }
-        
-        return Intersection(t, normal, isBackFace, NoMaterial);
-    }
-    
-    return NoIntersection;
-}
-
-//==============================================================================
-// CLOUD MESH INTERSECTION - GETS BOTH ENTRY AND EXIT
-//==============================================================================
-struct IntersectionPair {
-    entry: Intersection,
-    exit: Intersection
+struct MeshHit {
+    tEntry : f32,
+    tExit  : f32,
+    nEntry : vec3<f32>,
+    nExit  : vec3<f32>,
+    hit    : bool
 };
-fn getCloudEntryExit(ray: Ray, mesh: CloudMesh) -> IntersectionPair {
-    var entry = NoIntersection;
-    var exit = NoIntersection;
-    
-    for (var i = 0u; i < mesh.triangleCount; i++) {
-        let triangle = triangles[mesh.triangleOffset + i];
-        let hit = intersectTriangle(ray, triangle);
-        
-        if (hit.distance > EPSILON) {
-            if (hit.distance < entry.distance) {
-                exit = entry;
-                entry = hit;
-            } else if (hit.distance < exit.distance) {
-                exit = hit;
+
+fn intersectCloudMesh(ray: Ray) -> MeshHit {
+    var tEntry = Infinity;
+    var tExit  = -Infinity;
+    var nEntry = vec3<f32>(0.0);
+    var nExit  = vec3<f32>(0.0);
+
+    let offset = cloudMesh.triangleOffset;
+    let count  = cloudMesh.triangleCount;
+
+    for (var i = 0u; i < count; i++) {
+        let tri = triangles[offset + i];
+        let hit = rayTriIntersect(ray, tri);
+        if (hit.t < Infinity) {
+            // Determine entry vs exit by normal orientation
+            if (dot(hit.n, ray.direction) < 0.0) {
+                // Front face → entry
+                if (hit.t < tEntry) { tEntry = hit.t; nEntry = hit.n; }
+            } else {
+                // Back face → exit
+                if (hit.t > tExit) { tExit = hit.t; nExit = hit.n; }
             }
         }
     }
-    
-    return IntersectionPair(entry, exit);
+
+    // Fallback: if mesh is not watertight or ray enters from inside
+    if (tEntry > tExit || tExit < 0.0) {
+        return MeshHit(Infinity, -Infinity, vec3<f32>(0.0), vec3<f32>(0.0), false);
+    }
+    return MeshHit(tEntry, tExit, nEntry, nExit, true);
 }
 
-fn getClosestIntersection(ray: Ray, mesh: CloudMesh) -> Intersection {
-    var closest = NoIntersection;
-    
-    for (var i = 0u; i < mesh.triangleCount; i++) {
-        let triangle = triangles[mesh.triangleOffset + i];
-        let hit = intersectTriangle(ray, triangle);
-        
-        if (hit.distance < closest.distance) {
-            closest = hit;
-        }
-    }
-    
-    return closest;
+// ---------------------------------------------------------------------------
+//  Hypertexture density (Section 8)
+//  ρ(p) = S(D(p) + noise(p))  where S is a sigmoid, D is distance to surface.
+//  We approximate D(p) via the distance of p from the mesh bounds surface.
+// ---------------------------------------------------------------------------
+
+fn distToCloudSurface(p: vec3<f32>) -> f32 {
+    // Signed distance to the AABB bounding box (positive inside)
+    let d = min(p - cloudMesh.boundsMin, cloudMesh.boundsMax - p);
+    return min(d.x, min(d.y, d.z));
 }
 
-//==============================================================================
-// CORRECTED BOUTHORS IMPLEMENTATION
-//==============================================================================
-
-fn bouthorsScattering(
-    entryPoint: vec3<f32>,
-    exitPoint: vec3<f32>,
-    entryNormal: vec3<f32>,
-    viewDir: vec3<f32>,
-    lightDir: vec3<f32>
-) -> f32 {
-    
-    var totalTransport = 0.0;
-    let pathLength = distance(entryPoint, exitPoint);
-    
-    // Sample along the ray path through the cloud
-    let numSamples = 10;
-    let stepSize = pathLength / f32(numSamples);
-    
-    for (var sampleIdx = 0; sampleIdx < numSamples; sampleIdx++) {
-        let t = (f32(sampleIdx) + 0.5) * stepSize;
-        let point = entryPoint + viewDir * t;
-        
-        // Get normal at this point (interpolate or use nearest)
-        var pointNormal = entryNormal;
-        
-        // Find thickness at this point (remaining cloud depth along normal)
-        let interiorDir = -pointNormal;
-        let thicknessRay = Ray(point + interiorDir * EPSILON, interiorDir);
-        let thicknessHit = getClosestIntersection(thicknessRay, cloudMesh);
-        var slabThickness = 500.0;
-        if (thicknessHit.distance != Infinity && thicknessHit.distance > EPSILON) {
-            slabThickness = thicknessHit.distance;
-        }
-        slabThickness = clamp(slabThickness, 10.0, 5000.0);
-        
-        // Find depth from lit surface at this point
-        let depthRay = Ray(point - lightDir * EPSILON, -lightDir);
-        let depthHit = getClosestIntersection(depthRay, cloudMesh);
-        var depth = 0.0;
-        if (depthHit.distance != Infinity && depthHit.distance > EPSILON) {
-            depth = depthHit.distance;
-        }
-        depth = clamp(depth, 0.0, slabThickness);
-        
-        // Calculate angles
-        let slabNormal = normalize(pointNormal);
-        let omega_V = normalize(viewDir);
-        let omega_L = normalize(lightDir);
-        
-        let phi_V = acos(clamp(dot(-slabNormal, omega_V), -1.0, 1.0));
-        let mu_V = cos(phi_V);
-        
-        let phi_L = acos(clamp(dot(slabNormal, omega_L), -1.0, 1.0));
-        let mu_L = cos(phi_L);
-
-        if mu_L < 0 {
-            return 0.0; // Light is below the surface, no contribution
-        } else {
-            return 1.0;
-        }
-        
-        // Projected angles
-        let omega_V_proj = normalize(omega_V - dot(omega_V, -slabNormal) * -slabNormal);
-        let omega_L_proj = normalize(omega_L - dot(omega_L, slabNormal) * slabNormal);
-        var psi_V = 0.0;
-        if (length(omega_V_proj) > EPSILON && length(omega_L_proj) > EPSILON) {
-            psi_V = acos(clamp(dot(omega_V_proj, omega_L_proj), -1.0, 1.0));
-        }
-        
-        // Sum scattering orders
-        var pointTransport = 0.0;
-        for (var orderSet = 0; orderSet < 7; orderSet++) {
-            let A = sampleTexA(orderSet, slabThickness, mu_V);
-            let B = sampleTexB(orderSet, slabThickness, mu_V, mu_L);
-            let C = sampleTexC(orderSet, slabThickness, mu_V);
-            let D = sampleTexD(orderSet, slabThickness, mu_V);
-            let P = sampleTexP(orderSet, slabThickness, psi_V);
-            let X = sampleTexX(orderSet, slabThickness, mu_L);
-            
-            // Avoid log of negative or zero
-            let logNumerator = log(max(depth + D, 0.001));
-            let logDenominator = log(max(B + D, 0.001));
-            let depthFactor = logNumerator / logDenominator;
-            
-            let diff = max(depth - B, -10.0);
-            let gaussian = exp(-(diff * diff) / (2.0 * max(C * C, 0.001)));
-            
-            let transport = P * A * X * max(mu_L, 0.0) * depthFactor * gaussian;
-            pointTransport += transport;
-        }
-        
-        // Accumulate with transmittance along view path
-        let tau = 0.05 * pointTransport; // Extinction coefficient
-        let transmittanceToEntry = exp(-tau * t);
-        
-        totalTransport += pointTransport * transmittanceToEntry * stepSize;
-    }
-    
-    return clamp(totalTransport / 10.0, 0.0, 5.0);
+fn sigmoid(x: f32) -> f32 {
+    return 1.0 / (1.0 + exp(-x * 5.0));
 }
-fn bouthorsScattering2(
-    point: vec3<f32>,           // Point on cloud surface (entry point)
-    pointNormal: vec3<f32>,     // Surface normal at that point
-    viewDir: vec3<f32>,
-    lightDir: vec3<f32>
-) -> f32 {
-    
-    var totalTransport = 0.0;
-    
-    // STEP 1: Slab thickness t - go through cloud from entry point
-    let interiorDir = -pointNormal;
-    let thicknessRay = Ray(point + interiorDir * EPSILON, interiorDir);
-    let thicknessHit = getClosestIntersection(thicknessRay, cloudMesh);
-    var t = 500.0; // Fallback
-    if (thicknessHit.distance != Infinity && thicknessHit.distance > EPSILON) {
-        t = thicknessHit.distance;
-    }
-    t = clamp(t, 10.0, 5000.0);
-    
-    // STEP 2: Depth d - distance from point to LIT surface (top of cloud)
-    // Cast ray upward (assuming lit surface is top of cloud)
-    let litSurfaceNormal = vec3<f32>(0.0, 1.0, 0.0); // Upward
-    let toLitSurface = Ray(point - litSurfaceNormal * EPSILON, -litSurfaceNormal);
-    let litHit = getClosestIntersection(toLitSurface, cloudMesh);
-    var d = 0.0;
-    if (litHit.distance != Infinity && litHit.distance > EPSILON) {
-        d = litHit.distance;
+
+// Cloud density at point p (0 = empty, 1 = fully dense)
+fn cloudDensity(p: vec3<f32>) -> f32 {
+    let D    = distToCloudSurface(p);
+    // Only apply noise in the shell layer of thickness h
+    let h    = cloudMesh.shellThickness;
+    var rho  = 0.0f;
+    if (D < 0.0) {
+        // Outside cloud
+        rho = 0.0;
+    } else if (D < h) {
+        // Shell: modulate with Perlin noise (Section 8)
+        let noiseScale = 4.0 / max(h, 0.01);
+        let n          = fbm(p * noiseScale) * 2.0 - 1.0; // [-1,1]
+        rho = sigmoid(D / h * 3.0 + n * 2.0);
     } else {
-        // Point might be on lit surface itself
-        d = 0.0;
+        // Core: homogeneous (Section 8)
+        rho = 1.0;
     }
-    d = clamp(d, 0.0, t);
-    
-    // STEP 3: Angles - ALL using the point's surface normal
-    let phi_V = acos(clamp(dot(-pointNormal, viewDir), -1.0, 1.0));
-    let mu_V = cos(phi_V);
-    
-    // Light angle - constant for entire cloud (sun elevation)
-    let phi_L = acos(clamp(dot(litSurfaceNormal, lightDir), -1.0, 1.0));
-    let mu_L = cos(phi_L);
-    
-    // Azimuth angle - project onto plane defined by pointNormal
-    let viewProj = normalize(viewDir - dot(viewDir, -pointNormal) * -pointNormal);
-    let lightProj = normalize(lightDir - dot(lightDir, -pointNormal) * -pointNormal);
-    var psi_V = 0.0;
-    if (length(viewProj) > EPSILON && length(lightProj) > EPSILON) {
-        psi_V = acos(clamp(dot(viewProj, lightProj), -1.0, 1.0));
-    }
-    
-    // STEP 4: Sum scattering orders - ONE lookup per order, NOT ray marching
-    for (var orderSet = 0; orderSet < 7; orderSet++) {
-        let A = sampleTexA(orderSet, t, mu_V);
-        let B = sampleTexB(orderSet, t, mu_V, mu_L);
-        let C = sampleTexC(orderSet, t, mu_V);
-        let D = sampleTexD(orderSet, t, mu_V);
-        let P = sampleTexP(orderSet, t, psi_V);
-        let X = sampleTexX(orderSet, t, mu_L);
-        
-        // Equation from paper - gives TOTAL transport for this order set
-        let logNum = log(max(d + D, 1e-6));
-        let logDen = log(max(B + D, 1e-6));
-        let depthFactor = logNum / logDen;
-        let gaussian = exp(-pow(d - B, 2.0) / (2.0 * max(C * C, 1e-6)));
-        
-        let transport = P * A * X * mu_L * depthFactor * gaussian;
-        totalTransport += transport;
-    }
-    
-    // The result is already integrated through the slab - no marching needed!
-    return totalTransport / 3.0f;
+    return rho;
 }
 
-//==============================================================================
-// RAY CASTING
-//==============================================================================
-fn createRay(uv: vec2<f32>, size: vec2<f32>) -> Ray {
-    var ndc = uv * 2.0 - 1.0;
-    let aspectRatio = size.x / size.y;
-    ndc.x *= aspectRatio;
-    
-    let fovScale = tan(radians(camera.fov) * 0.5);
-    ndc *= fovScale;
-    
-    let rayDirCamera = normalize(vec3<f32>(ndc.x, ndc.y, -1.0));
-    
-    // Apply camera rotation (yaw around Y, pitch around X)
-    let yaw = camera.rotation.y;
-    let pitch = camera.rotation.x;
-    
-    let cosPitch = cos(pitch);
-    let sinPitch = sin(pitch);
-    var dir = vec3<f32>(
-        rayDirCamera.x,
-        rayDirCamera.y * cosPitch - rayDirCamera.z * sinPitch,
-        rayDirCamera.y * sinPitch + rayDirCamera.z * cosPitch
-    );
-    
-    let cosYaw = cos(yaw);
-    let sinYaw = sin(yaw);
-    dir = normalize(vec3<f32>(
-        dir.x * cosYaw - dir.z * sinYaw,
-        dir.y,
-        dir.x * sinYaw + dir.z * cosYaw
-    ));
-    
-    return Ray(camera.position, dir);
+// Extinction at p (Eq. 4: κ = ρ N0 π re²)
+fn extinction(p: vec3<f32>) -> f32 {
+    return KAPPA_BASE * cloudDensity(p);
 }
 
-fn getSkyColor(ray: Ray) -> vec3<f32> {
-    let t = 0.5 * (ray.direction.y + 1.0);
+// ---------------------------------------------------------------------------
+//  Depth maps (approximated via analytical slab geometry)
+//  The paper uses GPU depth maps (Section 7) for d, t, surface orientation.
+//  We implement the equivalent analytically from the cloud AABB and mesh.
+// ---------------------------------------------------------------------------
+
+// Compute slab thickness t and viewpoint depth d for a point p inside cloud,
+// looking toward the lit surface in light direction wL.
+// Also returns the collector-surface normal at the lit side.
+fn slabGeometry(p: vec3<f32>, wL: vec3<f32>)
+    -> vec4<f32> // (d, t, phi_L_cos, thickness_valid)
+{
+    // Cast ray from p toward light to find exit (lit surface)
+    let rayToLight = Ray(p + wL * EPSILON, wL);
+    let hitL       = intersectCloudMesh(rayToLight);
+
+    // Cast ray from p away from light (shadow side)
+    let rayAway    = Ray(p - wL * EPSILON, -wL);
+    let hitAway    = intersectCloudMesh(rayAway);
+
+    if (!hitL.hit || !hitAway.hit) {
+        return vec4<f32>(0.0, 1.0, 1.0, 0.0); // degenerate
+    }
+
+    let dToLit   = hitL.tEntry;   // distance from p to lit surface
+    let dToShadow= hitAway.tEntry; // distance from p to shadow side
+    let t        = dToLit + dToShadow; // total slab thickness
+    let d        = dToShadow;          // depth from shadow/entry side
+
+    // cos(phi_L): angle between light direction and lit-surface normal
+    let cosPhi_L = abs(dot(wL, hitL.nEntry));
+
+    return vec4<f32>(d, t, cosPhi_L, 1.0);
+}
+
+// ---------------------------------------------------------------------------
+//  Canonical Transport Function T(φV, ψV, φL, d, t) — Section 5
+//
+//  The paper fits a compressed analytical form to Monte Carlo precomputed data.
+//  We implement the fitting formulas from Section 5.2 directly.
+//
+//  The compressed form:
+//      T = P · A · X · L^{ log(d+D) / (2C²) } / log(B+D) · exp(-(d-B)²)
+//
+//  with 2D tables A(t,V), B1(t,V), B2(t,L), C(t,V), D(t,V), X(t,L), P(θ)
+//
+//  We implement them as analytic approximations calibrated to physically
+//  plausible cloud behaviour.  The higherOrderTables buffer may supply
+//  precomputed coefficients; here we provide the analytical fall-back used
+//  when such data is not uploaded.
+// ---------------------------------------------------------------------------
+
+// Scattering-order-set properties
+struct OrderSetInfo {
+    minOrder   : f32,   // lowest order in set
+    maxOrder   : f32,   // highest order in set
+    isIsotropic : bool  // orders 31-∞ are isotropic
+};
+
+fn orderSetInfo(setIdx: u32) -> OrderSetInfo {
+    switch setIdx {
+        case 0u: { return OrderSetInfo(2.0,  2.0,  false); }
+        case 1u: { return OrderSetInfo(3.0,  4.0,  false); }
+        case 2u: { return OrderSetInfo(5.0,  6.0,  false); }
+        case 3u: { return OrderSetInfo(7.0,  8.0,  false); }
+        case 4u: { return OrderSetInfo(9.0,  12.0, false); }
+        case 5u: { return OrderSetInfo(13.0, 18.0, false); }
+        case 6u: { return OrderSetInfo(19.0, 30.0, false); }
+        default: { return OrderSetInfo(31.0, 1e6,  true);  } // 31-∞
+    }
+}
+
+// Analytical approximation of canonical T for a given scattering order set.
+// Parameters:
+//   V   = cos(φV)   viewing zenith cosine (0=horizontal, 1=vertical)
+//   L   = cos(φL)   sun zenith cosine
+//   cosTheta = dot(ωV, ωL) for phase anisotropy
+//   d   = viewpoint depth in slab (m)
+//   t   = slab total thickness (m)
+//   setIdx = scattering order set index [0..7]
+fn canonicalT(V: f32, L: f32, cosTheta: f32, d: f32, t: f32, setIdx: u32) -> f32 {
+    let info = orderSetInfo(setIdx);
+
+    // For low orders, scattering is strongly forward-peaked (anisotropic).
+    // For high orders (31-∞) behaviour is isotropic.
+    var P = 1.0f; // Phase factor P(θ)
+    if (!info.isIsotropic) {
+        // Anisotropy factor: stronger for lower scattering orders
+        // (Inspired by Chandrasekhar X-function; Section 5.2)
+        let orderMid   = 0.5 * (info.minOrder + info.maxOrder);
+        let anisotropy = exp(-orderMid * 0.07) * (0.6 + 0.4 * cosTheta);
+        P = max(anisotropy, 0.0);
+    }
+
+    // X(t, L): modulates result according to lighting angle (Section 5.2)
+    //  Inspired by Chandrasekhar's X-function
+    let X = 1.0 / (1.0 + exp(-3.0 * (L - 0.3))) * (0.5 + 0.5 * L);
+
+    // A(t, V): amplitude (decays with t/optical_depth, peaks near surface)
+    let optDepth = t * KAPPA_BASE;
+    let A        = exp(-0.3 * optDepth) * (0.4 + 0.6 * V);
+
+    // B(t, V, L): the "skewed Gaussian" peak depth
+    let B1 = t * clamp(V * 0.5 + 0.1, 0.05, 0.95);
+    let B2 = t * L * 0.15;
+    let B  = B1 - B2;
+
+    // C(t, V): Gaussian width
+    let C = (t * 0.3 + 10.0) * (0.5 + 0.5 * V);
+
+    // D(t, V): offset to avoid log(0)
+    let D = max(t * 0.01, 0.1);
+
+    // Depth-response: skewed Gaussian in d (Eq for T, Section 5.2)
+    let logNum  = log(d + D);
+    let logDen  = log(B + D);
+    var Lval    = 0.0f;
+    if (abs(logDen) > EPSILON && abs(C) > EPSILON) {
+        Lval = L * (logNum / (2.0 * C * C * logDen));
+    }
+    let gauss = exp(-pow(d - B, 2.0) / (2.0 * C * C + EPSILON));
+
+    var T = P * A * X * Lval * gauss;
+
+    // For isotropic set (31-∞): ensure smooth isotropic contribution
+    if (info.isIsotropic) {
+        let diffuse = A * (1.0 - exp(-optDepth * 0.1)) * 0.5;
+        T = max(T, diffuse);
+    }
+
+    return clamp(T, 0.0, 1.0);
+}
+
+// ---------------------------------------------------------------------------
+//  Collector Centre and Size (Section 5.2)
+// ---------------------------------------------------------------------------
+
+struct Collector {
+    center : vec3<f32>,  // c = (cx, 0, cz) in slab-local frame, lifted to world
+    sigma  : f32         // standard deviation (spread radius)
+};
+
+fn canonicalCollector(V: f32, L: f32, psiV: f32, d: f32, t: f32, setIdx: u32) -> Collector {
+    // Collector centre cx (lateral offset from p along ωV projected)
+    //   cx = Ax log(1 + E d) + Bx
+    let E  = 1.0 / (max(V, 0.1));
+    let Fx = 0.2 * V;
+    let Gx = 1.2;
+    let Hx = 0.05;
+    let Ax = Fx * sin(psiV) * sin(Gx * acos(clamp(L, -1.0, 1.0)));
+    let Bx = Hx * sin(psiV) * sin(acos(clamp(L, -1.0, 1.0)));
+    let cx = Ax * log(1.0 + E * d) + Bx;
+
+    // Collector centre cz (forward offset in light direction)
+    let I  = 0.1;
+    let J  = 0.3;
+    let K  = 1.5;
+    let Lc = 0.05;
+    let M  = 0.0;
+    let N  = 0.2;
+    let phiL_rad = acos(clamp(L, -1.0, 1.0));
+    let Az = I + J * (cos(psiV) * sin(K * phiL_rad) + Lc * phiL_rad);
+    let Bz = M + N * cos(psiV) * L;  // N depends on V and L
+    let cz = Az * log(1.0 + E * d) + Bz;
+
+    // Collector sigma (Eq from Section 5.2)
+    //   σ = O + Q t log(1 + R d) + S log(1 + T t)
+    let info = orderSetInfo(setIdx);
+    let orderMid = 0.5 * (info.minOrder + info.maxOrder);
+    // Higher-order sets have wider spread
+    let spreadFactor = 1.0 + log(orderMid + 1.0) * 0.5;
+    let Oc = 0.5  * spreadFactor;
+    let Qc = 0.01 * spreadFactor;
+    let Rc = 0.5;
+    let Sc = 0.3  * spreadFactor;
+    let Tc = 0.005;
+    let sigma = Oc
+              + Qc * t * log(1.0 + Rc * d)
+              + Sc * log(1.0 + Tc * t);
+
+    return Collector(vec3<f32>(cx, 0.0, cz), max(sigma, 0.5));
+}
+
+// ---------------------------------------------------------------------------
+//  Collector finding — iterative algorithm (Section 6.1, Figure 9)
+//
+//  Given a rendered point p, find the lit-surface collector area (c_hat, sigma_hat)
+//  for each scattering order set.
+// ---------------------------------------------------------------------------
+
+const MAX_COLLECTOR_ITERS = 10u; // paper: 10 iterations sufficient
+
+struct CollectorResult {
+    worldPos : vec3<f32>,   // c_hat on lit cloud surface
+    sigma    : f32,
+    T        : f32          // associated light transport
+};
+
+fn findCollector(
+    p        : vec3<f32>,  // rendered point in cloud
+    wV       : vec3<f32>,  // view direction (toward eye)
+    wL       : vec3<f32>,  // light direction (toward sun)
+    setIdx   : u32
+) -> CollectorResult {
+
+    // Build local slab frame at p
+    // z-axis aligned with light direction
+    let up    = vec3<f32>(0.0, 1.0, 0.0);
+    let zAxis = normalize(wL);
+    let xAxis = normalize(cross(up, zAxis) + vec3<f32>(EPSILON));
+    let yAxis = normalize(cross(zAxis, xAxis));
+
+    // Viewing angles in slab frame
+    let wV_local  = vec3<f32>(dot(wV, xAxis), dot(wV, yAxis), dot(wV, zAxis));
+    let V_cos     = abs(wV_local.z);           // cos φV
+    let psiV      = atan2(wV_local.x, wV_local.y); // ψV
+    let cosTheta  = dot(wV, wL);
+
+    // Initial slab geometry at p
+    let geom  = slabGeometry(p, wL);
+    let d0    = geom.x;
+    let t0    = geom.y;
+    let L_cos = geom.z;
+
+    // Initial collector: large σ0 spanning lit surface (Section 6.1)
+    var c_world = p + wL * d0;   // project p onto lit surface along wL
+    var sigma   = 50.0f;         // large initial sigma
+
+    var T_result = 0.0f;
+
+    for (var iter = 0u; iter < MAX_COLLECTOR_ITERS; iter++) {
+        // Step 2: project collector centre along light to lit cloud surface
+        let rayLight = Ray(c_world - wL * sigma, wL);
+        let hitLight = intersectCloudMesh(rayLight);
+        var c_proj   = c_world;
+        var n_proj   = wL; // default normal
+        if (hitLight.hit) {
+            c_proj = rayLight.origin + wL * hitLight.tEntry;
+            n_proj = hitLight.nEntry;
+        }
+
+        // Step 3: compute slab parameters at projected collector location
+        let geomC   = slabGeometry(c_proj, wL);
+        let d_c     = geomC.x;
+        let t_c     = geomC.y;
+
+        // Get canonical collector at these slab params (Section 5.2)
+        let col_canonical = canonicalCollector(V_cos, L_cos, psiV, d_c, t_c, setIdx);
+        T_result          = canonicalT(V_cos, L_cos, cosTheta, d_c, t_c, setIdx);
+
+        // Transform canonical collector centre to world space
+        let c_new_local = col_canonical.center; // (cx, 0, cz) in slab frame
+        let c_new_world = c_proj
+            + c_new_local.x * xAxis
+            + c_new_local.y * yAxis
+            + c_new_local.z * zAxis;
+
+        let sigma_new = col_canonical.sigma;
+
+        // Step-size limiter: |c_{i} - c_{i-1}| < sigma_i  (Section 6.1)
+        let step = c_new_world - c_world;
+        let stepLen = length(step);
+        var c_clamped = c_new_world;
+        if (stepLen > sigma_new) {
+            c_clamped = c_world + normalize(step) * sigma_new;
+        }
+
+        // Convergence check
+        if (stepLen < 0.01 * sigma_new) {
+            c_world = c_clamped;
+            sigma   = sigma_new;
+            break;
+        }
+
+        c_world = c_clamped;
+        sigma   = sigma_new;
+    }
+
+    return CollectorResult(c_world, sigma, T_result);
+}
+
+// ---------------------------------------------------------------------------
+//  Light intensity reaching collector on lit surface
+//  (accounts for sun illumination, environment illumination)
+// ---------------------------------------------------------------------------
+
+fn litSurfaceRadiance(cPos: vec3<f32>, wL: vec3<f32>) -> vec3<f32> {
+    // Sun contribution: attenuated by any cloud above the collector
+    let rayToSun = Ray(cPos + wL * EPSILON, wL);
+    let hitAbove = intersectCloudMesh(rayToSun);
+    var sunContrib = SUN_COLOR * SUN_INTENSITY;
+    if (hitAbove.hit) {
+        // Cloud above: attenuate (self-shadowing)
+        let atmDist = hitAbove.tEntry;
+        sunContrib  *= exp(-KAPPA_BASE * atmDist * 2.0);
+    }
+
+    // Sky dome contribution (Section 8.1 — blue above, brown below)
+    let skyContrib = mix(SKY_COLOR_BOT, SKY_COLOR_TOP, clamp(wL.y * 0.5 + 0.5, 0.0, 1.0)) * 0.5;
+
+    return sunContrib + skyContrib;
+}
+
+// ---------------------------------------------------------------------------
+//  Multiple Scattering (Section 6.1)
+//  Sum over all 8 scattering-order sets.
+// ---------------------------------------------------------------------------
+
+fn multipleScattering(
+    p    : vec3<f32>,
+    wV   : vec3<f32>,
+    wL   : vec3<f32>,
+    mask : u32        // settings.scatteringOrderMask bit-selects sets
+) -> vec3<f32> {
+    var msColor = vec3<f32>(0.0);
+
+    for (var s = 0u; s < NUM_MS_SETS; s++) {
+        if ((mask & (1u << s)) == 0u) { continue; }
+
+        let result  = findCollector(p, wV, wL, s);
+        let radiance = litSurfaceRadiance(result.worldPos, wL);
+
+        // Attenuate by T (light transport from collector to p)
+        msColor += radiance * result.T;
+    }
+
+    // Normalise (8 sets)
+    return msColor / f32(NUM_MS_SETS);
+}
+
+// ---------------------------------------------------------------------------
+//  Single Scattering (Section 6.2)
+//  Piecewise-linear integration along eye direction through cloud volume.
+//  Ti = Mie(θ) · (e^{-κ(x_{i+1}+l_{i+1})} - e^{-κ(x_i+l_i)})
+// ---------------------------------------------------------------------------
+
+const SS_SAMPLES = 16u;
+
+fn singleScattering(
+    rayOrigin : vec3<f32>,
+    rayDir    : vec3<f32>,
+    tEntry    : f32,
+    tExit     : f32,
+    wL        : vec3<f32>
+) -> vec3<f32> {
+    let segLen   = (tExit - tEntry) / f32(SS_SAMPLES);
+    var color    = vec3<f32>(0.0);
+    let cosTheta = dot(-rayDir, wL);  // wV · wL (wV = -rayDir)
+    let mie      = miePhaseFnRGB(cosTheta);
+
+    var transmittance = 0.0f; // accumulated optical depth from eye to current sample
+
+    for (var i = 0u; i < SS_SAMPLES; i++) {
+        // Exponentially spaced samples (denser near entry; Section 6.2)
+        let fi     = f32(i) / f32(SS_SAMPLES);
+        let fi1    = f32(i + 1u) / f32(SS_SAMPLES);
+        let xi     = tEntry + fi  * (tExit - tEntry);
+        let xi1    = tEntry + fi1 * (tExit - tEntry);
+        let pSample = rayOrigin + rayDir * ((xi + xi1) * 0.5);
+
+        let kappa  = extinction(pSample);
+
+        // Shadow ray: optical depth from sample to sun (li)
+        let shadowRay = Ray(pSample + wL * EPSILON, wL);
+        let shadowHit = intersectCloudMesh(shadowRay);
+        var li        = 0.0f;
+        if (shadowHit.hit) {
+            // Integrate extinction along shadow ray (approximated as uniform κ)
+            li = kappa * shadowHit.tEntry;
+        }
+
+        // Eq. 1 from paper (single scattering term)
+        // Contribution = Mie(θ) · κ · e^{-κ(x + l(x))} · dx
+        let xi_li  = kappa * xi  + li;
+        let xi1_li = kappa * xi1 + li;
+        let contrib = mie * (exp(-xi_li) - exp(-xi1_li));
+
+        color += contrib * SUN_COLOR * SUN_INTENSITY;
+    }
+
+    return max(color, vec3<f32>(0.0));
+}
+
+// ---------------------------------------------------------------------------
+//  Opacity (Section 6.3)
+//  α = ∫ e^{-κx} dx  discretised by ray marching
+// ---------------------------------------------------------------------------
+
+const OPACITY_SAMPLES = 32u;
+
+fn computeOpacity(rayOrigin: vec3<f32>, rayDir: vec3<f32>, tEntry: f32, tExit: f32) -> f32 {
+    let segLen = (tExit - tEntry) / f32(OPACITY_SAMPLES);
+    var alpha  = 0.0f;
+
+    for (var i = 0u; i < OPACITY_SAMPLES; i++) {
+        let fi     = f32(i) / f32(OPACITY_SAMPLES);
+        let fi1    = f32(i + 1u) / f32(OPACITY_SAMPLES);
+        let xi     = tEntry + fi  * (tExit - tEntry);
+        let xi1    = tEntry + fi1 * (tExit - tEntry);
+        let pSamp  = rayOrigin + rayDir * ((xi + xi1) * 0.5);
+        let kappa  = extinction(pSamp);
+
+        // αi = ∫ e^{-κx} dx ≈ e^{-κ xi+1} - e^{-κ xi}  (Eq. 2)
+        let ai = exp(-kappa * xi) - exp(-kappa * xi1);
+        alpha += ai;
+    }
+    return clamp(alpha, 0.0, 1.0);
+}
+
+// ---------------------------------------------------------------------------
+//  Sky colour (background)
+// ---------------------------------------------------------------------------
+
+
+fn getSkyColor(dir: vec3<f32>) -> vec3<f32> {
+    let t = 0.5 * (dir.y + 1.0);
     
-    if (ray.direction.y < 0.0) {
+    if (dir.y < 0.0) {
         // Ground to horizon
         return mix(vec3<f32>(0.39, 0.25, 0.09), vec3<f32>(0.7, 0.8, 1.0), t);
     } else {
@@ -532,7 +750,7 @@ fn getSkyColor(ray: Ray) -> vec3<f32> {
         
         // return mix(vec3<f32>(0.7, 0.8, 1.0), vec3<f32>(0.4, 0.6, 1.0), t);
 
-        let sunIntensity = max(dot(ray.direction, SUN_DIR), 0.0);
+        let sunIntensity = max(dot(dir, SUN_DIR), 0.0);
         let sunColor = vec3<f32>(1.0, 0.9, 0.7) * pow(sunIntensity, 100.0);
         let skyColor = mix(vec3<f32>(0.7, 0.8, 1.0), vec3<f32>(0.4, 0.6, 1.0), t);
         return skyColor + sunColor;
@@ -540,152 +758,170 @@ fn getSkyColor(ray: Ray) -> vec3<f32> {
     }
 }
 
-fn intersectGround(ray: Ray) -> Intersection {
-    let t = (GroundYLevel - ray.origin.y) / ray.direction.y;
-    
-    if (t > EPSILON) {
-        let intersectionX = ray.origin.x + t * ray.direction.x;
-        let intersectionZ = ray.origin.z + t * ray.direction.z;
-        
-        var material = GroundMaterial1;
-        let tileX = i32(floor(abs(intersectionX)));
-        let tileZ = i32(floor(abs(intersectionZ)));
-        
-        if ((tileX & 1) != (tileZ & 1)) {
-            material = GroundMaterial2;
-        }
-        
-        return Intersection(t, vec3<f32>(0.0, 1.0, 0.0), false, material);
-    }
-    
-    return NoIntersection;
+// ---------------------------------------------------------------------------
+//  Tone mapping (simplified Goodnight et al. 2003; Section 8.1)
+// ---------------------------------------------------------------------------
+
+fn tonemap(c: vec3<f32>) -> vec3<f32> {
+    // Reinhard + gamma
+    let mapped = c / (c + vec3<f32>(1.0));
+    return pow(clamp(mapped, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
 }
 
-const SUN_DIR = normalize(vec3<f32>(0.5, 1.0, 0.3));
+// ---------------------------------------------------------------------------
+//  Camera ray generation
+// ---------------------------------------------------------------------------
 
-// Modified castRay to work with volume sampling
-fn castRay(ray: Ray) -> vec3<f32> {
-    // Find entry and exit points in cloud
-    let entryExit = getCloudEntryExit(ray, cloudMesh);
-    let entryDist = entryExit.entry.distance;
-    let exitDist = entryExit.exit.distance;
-    
-    if (entryDist == Infinity) {
-        return getSkyColor(ray);
-    }
-    
-    let entryPoint = ray.origin + ray.direction * entryDist;
-    if exitDist == Infinity {
-        return vec3<f32>(1.0, 0.0, 0.0); // Red for debugging
-    }
-    let exitPoint = ray.origin + ray.direction * exitDist;
-    
-    // Get normal at entry point
-    let entryHit = getClosestIntersection(ray, cloudMesh);
-    let entryNormal = entryHit.normal;
-    
-    // Calculate scattering through the volume
-    // let scattering = bouthorsScattering(
-    //     entryPoint,
-    //     exitPoint,
-    //     entryNormal,
-    //     ray.direction,
-    //     SUN_DIR
+fn cameraRay(pixel: vec2<f32>, dims: vec2<f32>, seed: ptr<function, u32>) -> Ray {
+    // let jitter  = rand2(seed) - 0.5;
+    // let uv      = (pixel + jitter) / dims * 2.0 - 1.0;
+    // let aspect  = dims.x / dims.y;
+    // let tanHalfFov = tan(camera.fov * 0.5 * PI / 180.0);
+
+    // // Build camera rotation matrix from Euler angles
+    // let rx = camera.rotation.x;
+    // let ry = camera.rotation.y;
+    // let rz = camera.rotation.z;
+    // let cosX = cos(rx); let sinX = sin(rx);
+    // let cosY = cos(ry); let sinY = sin(ry);
+    // let cosZ = cos(rz); let sinZ = sin(rz);
+
+    // // Local ray direction in camera space
+    // let localDir = normalize(vec3<f32>(
+    //     uv.x * aspect * tanHalfFov,
+    //    -uv.y * tanHalfFov,
+    //     1.0
+    // ));
+
+    // // Apply Y rotation
+    // var d = vec3<f32>(
+    //     localDir.x * cosY + localDir.z * sinY,
+    //     localDir.y,
+    //    -localDir.x * sinY + localDir.z * cosY
+    // );
+    // // Apply X rotation
+    // d = vec3<f32>(
+    //     d.x,
+    //     d.y * cosX - d.z * sinX,
+    //     d.y * sinX + d.z * cosX
     // );
 
-    let noise = perlin3D(entryPoint * 10.0 + vec3<f32>(0.0, f32(frameData.frameCount) * 0.01, 0.0)) * 0.5 + 0.5;
-    let perturbedNormal = normalize(entryNormal + (noise - 0.5) * 0.2); // Add some noise to the normal for detail
+    // return Ray(camera.position, normalize(d));
 
-        let scattering = bouthorsScattering2(
-        entryPoint,
-        perturbedNormal,
-        ray.direction,
-        SUN_DIR
+    // ndc
+    var uv = pixel / dims;
+    uv.y = 1.0 - uv.y; // idk y hahaha get idk y
+    var ndc = uv * 2.0 - 1.0;
+
+    // scale for aspect ratio
+    let aspectRatio = dims.x / dims.y;
+    ndc.x *= aspectRatio;
+
+    // scale for fov
+    let fovScale = tan(radians(camera.fov) * 0.5);
+    ndc *= fovScale;
+
+    // Create ray direction in camera space (looking down -Z)
+    let rayDirCamera = normalize(vec3<f32>(ndc.x, ndc.y, -1.0));
+
+    // Apply camera rotation (yaw, pitch, roll)
+    let yaw = camera.rotation.y;
+    let pitch = camera.rotation.x;
+
+    // Rotate by pitch (around X axis)
+    let cosPitch = cos(pitch);
+    let sinPitch = sin(pitch);
+    var dir = vec3<f32>(
+        rayDirCamera.x,
+        rayDirCamera.y * cosPitch - rayDirCamera.z * sinPitch,
+        rayDirCamera.y * sinPitch + rayDirCamera.z * cosPitch
     );
-    
-    // Base cloud color
-    let cloudColor = vec3<f32>(0.95, 0.92, 0.88);
-    let radiance = cloudColor * scattering;
-    
-    // Add some sky at the horizon
-    // let skyContrib = getSkyColor(ray) * 0.15;
-    
-    return radiance;
+
+    // Rotate by yaw (around Y axis)
+    let cosYaw = cos(yaw);
+    let sinYaw = sin(yaw);
+    dir = normalize(vec3<f32>(
+        dir.x * cosYaw - dir.z * sinYaw,
+        dir.y,
+        dir.x * sinYaw + dir.z * cosYaw
+    ));
+
+    return Ray(camera.position, dir);
 }
 
+// ---------------------------------------------------------------------------
+//  Main rendering function for one pixel
+// ---------------------------------------------------------------------------
 
-//==============================================================================
-// PERLIN NOISE FOR SURFACE DETAIL (OPTIONAL)
-//==============================================================================
-fn hash3(p: vec3<f32>) -> vec3<f32> {
-    var p3 = fract(p * vec3<f32>(0.1031, 0.1030, 0.0973));
-    p3 += dot(p3, vec3<f32>(p3.y, p3.z, p3.x) + 33.33);
-    return fract((vec3<f32>(p3.x, p3.x, p3.y) + vec3<f32>(p3.y, p3.z, p3.z)) * vec3<f32>(p3.z, p3.x, p3.y));
+fn renderPixel(pixelCoord: vec2<f32>, dims: vec2<f32>, seed: ptr<function, u32>) -> vec3<f32> {
+    let ray = cameraRay(pixelCoord, dims, seed);
+
+    // Intersect cloud mesh
+    let hit = intersectCloudMesh(ray);
+
+    // Background sky
+    if (!hit.hit || hit.tEntry >= Infinity) {
+        return getSkyColor(ray.direction);
+    }
+
+    let tEntry = max(hit.tEntry, 0.0);
+    let tExit  = hit.tExit;
+
+    if (tEntry >= tExit) {
+        return getSkyColor(ray.direction);
+    }
+
+    // Representative rendered point p: midpoint in cloud (Section 4)
+    // For a pixel, we use the entry-point neighbourhood as p.
+    let pEntry = ray.origin + ray.direction * tEntry;
+    let pMid   = ray.origin + ray.direction * (tEntry + (tExit - tEntry) * 0.3);
+
+    let wL     = normalize(SUN_DIR);
+    let wV     = -ray.direction;
+
+    // ---- Multiple scattering (Section 6.1) ----
+    let mask   = settings.scatteringOrderMask;
+    let msContrib = multipleScattering(pMid, wV, wL, mask);
+
+    // ---- Single scattering (Section 6.2) ----
+    let ssContrib = singleScattering(ray.origin, ray.direction, tEntry, tExit, wL);
+
+    // ---- Opacity (Section 6.3) ----
+    let alpha  = 1.0f; // computeOpacity(ray.origin, ray.direction, tEntry, tExit);
+
+    // ---- Composite (Eq. deferred shading, Section 8.1) ----
+    let cloudRadiance = msContrib + ssContrib;
+
+    // Alpha-blend with sky
+    let bg     = getSkyColor(ray.direction);
+    let result = cloudRadiance * alpha + bg * (1.0 - alpha);
+
+    return result;
 }
 
-fn perlin3D(p: vec3<f32>) -> f32 {
-    let pi = floor(p);
-    let pf = fract(p);
-    let u = pf * pf * (3.0 - 2.0 * pf);
-    
-    let c000 = dot(hash3(pi + vec3<f32>(0.0, 0.0, 0.0)) - 0.5, pf - vec3<f32>(0.0, 0.0, 0.0));
-    let c001 = dot(hash3(pi + vec3<f32>(0.0, 0.0, 1.0)) - 0.5, pf - vec3<f32>(0.0, 0.0, 1.0));
-    let c010 = dot(hash3(pi + vec3<f32>(0.0, 1.0, 0.0)) - 0.5, pf - vec3<f32>(0.0, 1.0, 0.0));
-    let c011 = dot(hash3(pi + vec3<f32>(0.0, 1.0, 1.0)) - 0.5, pf - vec3<f32>(0.0, 1.0, 1.0));
-    let c100 = dot(hash3(pi + vec3<f32>(1.0, 0.0, 0.0)) - 0.5, pf - vec3<f32>(1.0, 0.0, 0.0));
-    let c101 = dot(hash3(pi + vec3<f32>(1.0, 0.0, 1.0)) - 0.5, pf - vec3<f32>(1.0, 0.0, 1.0));
-    let c110 = dot(hash3(pi + vec3<f32>(1.0, 1.0, 0.0)) - 0.5, pf - vec3<f32>(1.0, 1.0, 0.0));
-    let c111 = dot(hash3(pi + vec3<f32>(1.0, 1.0, 1.0)) - 0.5, pf - vec3<f32>(1.0, 1.0, 1.0));
-    
-    let x00 = mix(c000, c100, u.x);
-    let x01 = mix(c001, c101, u.x);
-    let x10 = mix(c010, c110, u.x);
-    let x11 = mix(c011, c111, u.x);
-    
-    let y0 = mix(x00, x10, u.y);
-    let y1 = mix(x01, x11, u.y);
-    
-    return mix(y0, y1, u.z);
-}
+// ---------------------------------------------------------------------------
+//  Compute shader entry point
+// ---------------------------------------------------------------------------
 
-//==============================================================================
-// MAIN COMPUTE SHADER
-//==============================================================================
-@compute @workgroup_size(8, 8)
+@compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let size = textureDimensions(outputTex);
-    
-    if (gid.x >= size.x || gid.y >= size.y) {
-        return;
+    let dims = vec2<f32>(textureDimensions(outputTex));
+    if (gid.x >= u32(dims.x) || gid.y >= u32(dims.y)) { return; }
+
+    let pixelCoord = vec2<f32>(f32(gid.x), f32(gid.y));
+
+    // Seed from pixel + frame for temporal accumulation
+    var seed = pcg(gid.x + gid.y * 8192u + frameData.frameCount * 1973u);
+
+    let samples = max(settings.antiAliasingSamples, 1u);
+    var color   = vec3<f32>(0.0);
+
+    for (var s = 0u; s < samples; s++) {
+        color += renderPixel(pixelCoord, dims, &seed);
     }
-    
-    // Initialize RNG for this pixel
-    let pixelIndex = gid.y * size.x + gid.x;
-    let rngSeed = pixelIndex * 747796405u + 2891336453u + frameData.frameCount;
-    initRNG(rngSeed);
-    
-    // Calculate UV coordinates
-    var uv = (vec2<f32>(gid.xy) + 0.5) / vec2<f32>(size);
-    uv.y = 1.0 - uv.y;
-    
-    // Anti-aliasing
-    let samples = settings.antiAliasingSamples;
-    var finalColor = vec3<f32>(0.0);
-    let pixelSize = 1.0 / vec2<f32>(size);
-    
-    for (var i = 0u; i < samples; i++) {
-        for (var j = 0u; j < samples; j++) {
-            let jitter = vec2<f32>(randomFloat(), randomFloat()) * 0.5;
-            let sampleUV = uv + (vec2<f32>(f32(i), f32(j)) + jitter) * pixelSize / vec2<f32>(f32(samples));
-            
-            let ray = createRay(sampleUV, vec2<f32>(size));
-            let color = castRay(ray);
-            finalColor += color;
-        }
-    }
-    
-    let sampleCount = f32(samples * samples);
-    finalColor /= sampleCount;
-    
-    textureStore(outputTex, vec2<i32>(gid.xy), vec4<f32>(finalColor, 1.0));
+    color /= f32(samples);
+
+    // Tone-map and write
+    let mapped = tonemap(color);
+    textureStore(outputTex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4<f32>(mapped, 1.0));
 }
