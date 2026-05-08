@@ -430,42 +430,61 @@ fn getTime() -> f32 {
     return f32(frameData.frameCount) * 0.016667;
 }
 
+// fn cloudDensity(p: vec3<f32>) -> f32 {
+//     let time = getTime();
+
+//     // Drift vectors — slightly different speeds per axis avoids directional
+//     // streaking. The shell uses a faster drift so wisps morph quickly;
+//     // the macro field uses a slower drift so the bulk shape evolves gently.
+//     let driftFast = vec3<f32>(time * 0.08, time * 0.02, time * 0.05);
+//     let driftSlow = vec3<f32>(time * 0.03, time * 0.015, time * 0.02);
+
+//     // Spatio-temporal density modulator: a low-frequency 3D noise field that
+//     // breathes through the cloud volume, creating dissipation pockets that
+//     // cut diagonally through the cloud rather than tracking the AABB. This
+//     // is what keeps the box silhouette hidden when density drops locally.
+//     let m        = perlin3D(p * 0.15 + driftSlow);
+//     let densityField = clamp(0.6 + m * 1.6, 0.0, 1.4);
+
+//     // Gentle whole-cloud breathing — a global rhythm on top of everything
+//     let breathe = 0.85 + 0.15 * sin(time * 0.30);
+
+//     let D = distToCloudSurface(p);
+//     let h = cloudMesh.shellThickness;
+
+//     var rho = 0.0f;
+//     if (D < 0.0) {
+//         rho = 0.0;
+//     } else if (D < h) {
+//         // Shell wisps advect through the FBM field — edges constantly evolve
+//         let noiseScale = 4.0 / max(h, 0.01);
+//         let n          = fbm(p * noiseScale + driftFast) * 2.0 - 1.0;
+//         rho = sigmoid(D / h * 3.0 + n * 2.0);
+//     } else {
+//         rho = 1.0;
+//     }
+
+//     rho *= densityField * breathe;
+//     return clamp(rho, 0.0, 1.0);
+// }
 fn cloudDensity(p: vec3<f32>) -> f32 {
-    let time = getTime();
-
-    // Drift vectors — slightly different speeds per axis avoids directional
-    // streaking. The shell uses a faster drift so wisps morph quickly;
-    // the macro field uses a slower drift so the bulk shape evolves gently.
-    let driftFast = vec3<f32>(time * 0.08, time * 0.02, time * 0.05);
-    let driftSlow = vec3<f32>(time * 0.03, time * 0.015, time * 0.02);
-
-    // Spatio-temporal density modulator: a low-frequency 3D noise field that
-    // breathes through the cloud volume, creating dissipation pockets that
-    // cut diagonally through the cloud rather than tracking the AABB. This
-    // is what keeps the box silhouette hidden when density drops locally.
-    let m        = perlin3D(p * 0.15 + driftSlow);
-    let densityField = clamp(0.6 + m * 1.6, 0.0, 1.4);
-
-    // Gentle whole-cloud breathing — a global rhythm on top of everything
-    let breathe = 0.85 + 0.15 * sin(time * 0.30);
-
-    let D = distToCloudSurface(p);
-    let h = cloudMesh.shellThickness;
-
-    var rho = 0.0f;
+    let D    = distToCloudSurface(p);
+    // Only apply noise in the shell layer of thickness h
+    let h    = cloudMesh.shellThickness;
+    var rho  = 0.0f;
     if (D < 0.0) {
+        // Outside cloud
         rho = 0.0;
     } else if (D < h) {
-        // Shell wisps advect through the FBM field — edges constantly evolve
+        // Shell: modulate with Perlin noise (Section 8)
         let noiseScale = 4.0 / max(h, 0.01);
-        let n          = fbm(p * noiseScale + driftFast) * 2.0 - 1.0;
+        let n          = fbm(p * noiseScale) * 2.0 - 1.0; // [-1,1]
         rho = sigmoid(D / h * 3.0 + n * 2.0);
     } else {
+        // Core: homogeneous (Section 8)
         rho = 1.0;
     }
-
-    rho *= densityField * breathe;
-    return clamp(rho, 0.0, 1.0);
+    return rho;
 }
 
 fn extinction(p: vec3<f32>) -> f32 {

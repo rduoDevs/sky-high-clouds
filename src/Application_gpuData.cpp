@@ -435,8 +435,9 @@ void Application::loadCloudMesh() {
     std::vector<tinyobj::material_t> materials;
     std::string err;
 
-    bool ok = tinyobj::LoadObj(&attrib, &shapes, &materials, &err,
-                               "resources/testobj.obj", nullptr, true);
+    bool ok =
+        tinyobj::LoadObj(&attrib, &shapes, &materials, &err,
+                         "resources/better_test_cloud.obj", nullptr, true);
 
     if (!ok) {
         std::cerr << "OBJ load failed: " << err << std::endl;
