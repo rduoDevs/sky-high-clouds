@@ -54,9 +54,10 @@ struct Triangle {
     v0 : vec3<f32>, pad0 : f32,
     v1 : vec3<f32>, pad1 : f32,
     v2 : vec3<f32>, pad2 : f32,
-    normal : vec3<f32>, pad3 : f32
+    n0 : vec3<f32>, pad3 : f32,
+    n1 : vec3<f32>, pad4 : f32,
+    n2 : vec3<f32>, pad5 : f32,
 };
-
 struct CloudMesh {
     boundsMin      : vec3<f32>, pad0 : f32,
     boundsMax      : vec3<f32>, pad1 : f32,
@@ -124,7 +125,7 @@ const MIE_G      = 0.75f;
 const NUM_MS_SETS = 8u;
 
 const SUN_DIR       = vec3<f32>(0.577, 0.816, 0.0);
-const SUN_COLOR     = vec3<f32>(1.0,0.98,0.96);
+const SUN_COLOR     = vec3<f32>(1.0,1.0,1.0);
 const SUN_INTENSITY = 3.0f;
 const SKY_COLOR_TOP = vec3<f32>(0.35, 0.55, 0.95);
 const SKY_COLOR_BOT = vec3<f32>(0.2, 0.1, 0.0);
@@ -313,7 +314,9 @@ fn rayTriIntersect(ray: Ray, tri: Triangle) -> TriHit {
     if (v < 0.0 || u + v > 1.0) { return TriHit(Infinity, vec3<f32>(0.0)); }
     let t  = f * dot(e2, q);
     if (t < EPSILON) { return TriHit(Infinity, vec3<f32>(0.0)); }
-    return TriHit(t, tri.normal);
+    let w = 1.0 - u - v;
+    let n = normalize(w * tri.n0 + u * tri.n1 + v * tri.n2);
+    return TriHit(t, n);
 }
 
 fn intersectFromInside(ray: Ray) -> InsideHit {

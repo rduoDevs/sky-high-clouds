@@ -460,6 +460,12 @@ void Application::loadCloudMesh() {
                    scale +
                translate;
     };
+    auto getNormal = [&](int idx) {
+        return glm::vec3(
+            attrib.normals[3 * idx + 0],
+            attrib.normals[3 * idx + 1],
+            attrib.normals[3 * idx + 2]);
+    };
 
     for (const auto& shape : shapes) {
         const auto& mesh = shape.mesh;
@@ -475,7 +481,9 @@ void Application::loadCloudMesh() {
             t.v0 = getVertex(mesh.indices[off + 0].vertex_index);
             t.v1 = getVertex(mesh.indices[off + 1].vertex_index);
             t.v2 = getVertex(mesh.indices[off + 2].vertex_index);
-            t.normal = glm::normalize(glm::cross(t.v1 - t.v0, t.v2 - t.v0));
+            t.n0 = getNormal(mesh.indices[off + 0].normal_index);
+            t.n1 = getNormal(mesh.indices[off + 1].normal_index);
+            t.n2 = getNormal(mesh.indices[off + 2].normal_index);
 
             boundsMin =
                 glm::min(boundsMin, glm::min(t.v0, glm::min(t.v1, t.v2)));
