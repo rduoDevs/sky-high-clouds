@@ -10,8 +10,12 @@ struct GPUTriangle {
     float pad1;
     glm::vec3 v2;
     float pad2;
-    glm::vec3 normal;
+    glm::vec3 n0;
     float pad3;
+    glm::vec3 n1;
+    float pad4;
+    glm::vec3 n2;
+    float pad5;
 };
 
 struct CloudMesh {

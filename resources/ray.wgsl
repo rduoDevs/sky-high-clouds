@@ -1,13 +1,4 @@
-// =============================================================================
-//  Interactive Multiple Anisotropic Scattering in Clouds
-//  Bouthors et al., I3D 2008
-//  WGSL Compute Shader Implementation
-// =============================================================================
-
-// ---------------------------------------------------------------------------
-//  Structs
-// ---------------------------------------------------------------------------
-
+//structs
 struct Camera {
     position : vec3<f32>,
     rotation : vec3<f32>,
@@ -63,9 +54,10 @@ struct Triangle {
     v0 : vec3<f32>, pad0 : f32,
     v1 : vec3<f32>, pad1 : f32,
     v2 : vec3<f32>, pad2 : f32,
-    normal : vec3<f32>, pad3 : f32
+    n0 : vec3<f32>, pad3 : f32,
+    n1 : vec3<f32>, pad4 : f32,
+    n2 : vec3<f32>, pad5 : f32,
 };
-
 struct CloudMesh {
     boundsMin      : vec3<f32>, pad0 : f32,
     boundsMax      : vec3<f32>, pad1 : f32,
@@ -108,9 +100,7 @@ struct CollectorResult {
     T        : f32
 };
 
-// ---------------------------------------------------------------------------
-//  Bindings
-// ---------------------------------------------------------------------------
+//binds
 
 @group(0) @binding(0) var<uniform>       camera            : Camera;
 @group(0) @binding(1) var<storage, read> world             : World;
@@ -123,9 +113,7 @@ struct CollectorResult {
 @group(0) @binding(8) var<storage, read> sdfBuffer         : array<f32>;
 // binding 9 was sdfSampler, ignore it
 
-// ---------------------------------------------------------------------------
-//  Constants
-// ---------------------------------------------------------------------------
+//const
 
 const Infinity     = 1e6f;
 const GroundYLevel = -1.0f;
@@ -133,16 +121,16 @@ const EPSILON      = 1e-4f;
 const PI           = 3.14159265359f;
 const TWO_PI       = 6.28318530718f;
 
-const KAPPA_BASE = 0.05f;
-const MIE_G      = 0.85f;
+const EXTINCTION_FACTOR = 0.017f;
+const MIE_G      = 0.75f;
 
 const NUM_MS_SETS = 8u;
 
 const SUN_DIR       = vec3<f32>(0.577, 0.816, 0.0);
-const SUN_COLOR     = vec3<f32>(1.0, 0.97, 0.9);
+const SUN_COLOR     = vec3<f32>(1.0,1.0,1.0);
 const SUN_INTENSITY = 3.0f;
 const SKY_COLOR_TOP = vec3<f32>(0.35, 0.55, 0.95);
-const SKY_COLOR_BOT = vec3<f32>(0.7, 0.6, 0.5);
+const SKY_COLOR_BOT = vec3<f32>(0.2, 0.1, 0.0);
 
 const SCALE: f32 = 100.0;
 
@@ -242,6 +230,48 @@ fn fbm(p: vec3<f32>) -> f32 {
     return val;
 }
 
+fn worley3D(p: vec3<f32>) -> f32 {
+    let pi = floor(p);
+    let pf = fract(p);
+
+    var minDist = 1.0;
+
+    for (var x = -1; x <= 1; x++) {
+        for (var y = -1; y <= 1; y++) {
+            for (var z = -1; z <= 1; z++) {
+                let neighbor = vec3<f32>(f32(x), f32(y), f32(z));
+                let cellPos = pi + neighbor;
+                let randomPoint = hash3(cellPos);
+
+                let diff = neighbor + randomPoint - pf;
+                let dist = length(diff);
+
+                minDist = min(minDist, dist);
+            }
+        }
+    }
+
+    return clamp(minDist, 0.0, 1.0);
+}
+
+fn worleyFbm(p: vec3<f32>) -> f32 {
+    var value = 0.0;
+    var amplitude = 0.5;
+    var frequency = 1.0;
+    var norm = 0.0;
+
+    for (var i = 0; i < 3; i++) {
+        value += amplitude * worley3D(p * frequency);
+        norm += amplitude;
+
+        frequency *= 2.0;
+        amplitude *= 0.5;
+    }
+
+    return clamp(value / max(norm, 1e-5), 0.0, 1.0);
+}
+
+
 // ---------------------------------------------------------------------------
 //  Phase functions
 // ---------------------------------------------------------------------------
@@ -286,7 +316,9 @@ fn rayTriIntersect(ray: Ray, tri: Triangle) -> TriHit {
     if (v < 0.0 || u + v > 1.0) { return TriHit(Infinity, vec3<f32>(0.0)); }
     let t  = f * dot(e2, q);
     if (t < EPSILON) { return TriHit(Infinity, vec3<f32>(0.0)); }
-    return TriHit(t, tri.normal);
+    let w = 1.0 - u - v;
+    let n = normalize(w * tri.n0 + u * tri.n1 + v * tri.n2);
+    return TriHit(t, n);
 }
 
 fn intersectFromInside(ray: Ray) -> InsideHit {
@@ -424,6 +456,27 @@ fn closestPointOnTriangle(
     return a + ab * v + ac * w;
 }
 
+fn pointInsideCloudMesh(p: vec3<f32>) -> bool {
+    // Cast in a non-axis-aligned direction to reduce edge/vertex degeneracies.
+    let dir = normalize(vec3<f32>(0.754877, 0.569840, 0.322570));
+    let ray = Ray(p + dir * EPSILON, dir);
+
+    var hits = 0u;
+    let offset = cloudMesh.triangleOffset;
+    let count  = cloudMesh.triangleCount;
+
+    for (var i = 0u; i < count; i++) {
+        let tri = triangles[offset + i];
+        let hit = rayTriIntersect(ray, tri);
+
+        if (hit.t < Infinity) {
+            hits += 1u;
+        }
+    }
+
+    return (hits & 1u) == 1u;
+}
+
 fn distToCloudSurface(p: vec3<f32>) -> f32 {
     let padding = cloudMesh.shellThickness * 1.5;
     let sdfBoundsMin = cloudMesh.boundsMin - vec3<f32>(padding);
@@ -471,6 +524,7 @@ fn distToCloudSurface(p: vec3<f32>) -> f32 {
     let sdf = mix(sdf0, sdf1, f.z);
     return sdf;
 }
+
 
 fn sigmoid(x: f32) -> f32 {
     return 1.0 / (1.0 + exp(-x * 5.0));
@@ -538,8 +592,9 @@ fn cloudDensity(p: vec3<f32>) -> f32 {
     return rho;
 }
 
+
 fn extinction(p: vec3<f32>) -> f32 {
-    return KAPPA_BASE * cloudDensity(p) * SCALE;
+    return EXTINCTION_FACTOR * cloudDensity(p) * SCALE;
 }
 
 fn shadowOpticalDepth(p: vec3<f32>, wL: vec3<f32>) -> f32 {
@@ -818,7 +873,7 @@ fn litSurfaceRadiance(cPos: vec3<f32>, wL: vec3<f32>) -> vec3<f32> {
     var sunContrib = SUN_COLOR * SUN_INTENSITY;
     if (hitAbove.hit) {
         let atmDist = hitAbove.tEntry;
-        sunContrib *= exp(-KAPPA_BASE * atmDist * 2.0);
+        sunContrib *= exp(-EXTINCTION_FACTOR * atmDist * 2.0);
     }
     let skyContrib = mix(SKY_COLOR_BOT, SKY_COLOR_TOP,
                          clamp(wL.y * 0.5 + 0.5, 0.0, 1.0)) * 0.5;
@@ -891,7 +946,7 @@ fn computeOpacity(rayOrigin: vec3<f32>, rayDir: vec3<f32>, tEntry: f32, tExit: f
 fn getSkyColor(dir: vec3<f32>) -> vec3<f32> {
     let t = 0.5 * (dir.y + 1.0);
     if (dir.y < 0.0) {
-        return mix(vec3<f32>(0.39, 0.25, 0.09), vec3<f32>(0.7, 0.8, 1.0), t);
+        return mix(SKY_COLOR_BOT, vec3<f32>(0.7, 0.8, 1.0), t);
     } else {
         let sunIntensity = max(dot(dir, SUN_DIR), 0.0);
         let sunColor = vec3<f32>(1.0, 0.9, 0.7) * pow(sunIntensity, 100.0);
@@ -969,7 +1024,7 @@ fn renderPixel(pixelCoord: vec2<f32>, dims: vec2<f32>, seed: ptr<function, u32>)
     let wV = -ray.direction;
 
     let mask      = settings.scatteringOrderMask;
-    let msContrib = multipleScattering(pMid, wV, wL, mask);
+    let msContrib = multipleScattering(pEntry, wV, wL, mask);
 
     var ssContrib = vec3<f32>(0.0);
     if ((mask & (1u << 8u)) != 0u) {
@@ -980,6 +1035,8 @@ fn renderPixel(pixelCoord: vec2<f32>, dims: vec2<f32>, seed: ptr<function, u32>)
     let cloudRadiance = msContrib + ssContrib;
     let bg            = getSkyColor(ray.direction);
     return cloudRadiance * alpha + bg * (1.0 - alpha);
+    //return vec3<f32>(computeOpacity(ray.origin, ray.direction, tEntry, tExit));
+
 }
 
 @compute @workgroup_size(8, 8, 1)
