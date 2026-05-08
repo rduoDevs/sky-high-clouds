@@ -234,7 +234,7 @@ fn fbm(p: vec3<f32>) -> f32 {
     var val  = 0.0f;
     var amp  = 0.5f;
     var freq = 1.0f;
-    for (var i = 0; i < 5; i++) {
+    for (var i = 0; i < 3; i++) {
         val  += amp * perlin3D(p * freq);
         amp  *= 0.5;
         freq *= 2.1;
@@ -519,6 +519,7 @@ fn getTime() -> f32 {
 // }
 fn cloudDensity(p: vec3<f32>) -> f32 {
     let D    = distToCloudSurface(p);
+    let time = getTime();
     // Only apply noise in the shell layer of thickness h
     let h    = cloudMesh.shellThickness;
     var rho  = 0.0f;
@@ -528,7 +529,7 @@ fn cloudDensity(p: vec3<f32>) -> f32 {
     } else if (D < h) {
         // Shell: modulate with Perlin noise (Section 8)
         let noiseScale = 4.0 / max(h, 0.01);
-        let n          = fbm(p * noiseScale) * 2.0 - 1.0; // [-1,1]
+        let n          = fbm((p + time * vec3<f32>(0.08, 0.02, 0.05) * 0.7) * noiseScale) * 2.0 - 1.0; // [-1,1]
         rho = sigmoid(D / h * 3.0 + n * 2.0);
     } else {
         // Core: homogeneous (Section 8)
