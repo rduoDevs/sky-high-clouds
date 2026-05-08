@@ -130,6 +130,9 @@ class Application {
     wgpu::Texture m_higherOrderTexture;
     wgpu::TextureView m_higherOrderTextureView;
     wgpu::Sampler m_texSampler;
+
+    wgpu::Buffer m_sdfBuffer;
+
     void loadCloudMesh();
 };
 

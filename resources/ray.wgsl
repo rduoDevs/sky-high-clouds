@@ -120,6 +120,8 @@ struct CollectorResult {
 @group(0) @binding(5) var<storage, read> triangles         : array<Triangle>;
 @group(0) @binding(6) var<uniform>       cloudMesh         : CloudMesh;
 @group(0) @binding(7) var<storage, read> higherOrderTables : array<f32>;
+@group(0) @binding(8) var<storage, read> sdfBuffer         : array<f32>;
+// binding 9 was sdfSampler, ignore it
 
 // ---------------------------------------------------------------------------
 //  Constants
@@ -423,20 +425,51 @@ fn closestPointOnTriangle(
 }
 
 fn distToCloudSurface(p: vec3<f32>) -> f32 {
-    // go through the mesh and find the closest point on any triangle, then return the distance to that point. This is a brute-force approach and can be optimized with spatial data structures, but it's straightforward for our purposes.
-    var minDist = Infinity;
-    let offset = cloudMesh.triangleOffset;
-    let count  = cloudMesh.triangleCount;
-    for (var i = 0u; i < count; i++) {
-        let tri = triangles[offset + i];
-        let closest = closestPointOnTriangle(p, tri.v0, tri.v1, tri.v2);
-        let dist = distance(p, closest);
-        if (dist < minDist) {
-            minDist = dist;
-        }
+    let padding = cloudMesh.shellThickness * 1.5;
+    let sdfBoundsMin = cloudMesh.boundsMin - vec3<f32>(padding);
+    let sdfBoundsMax = cloudMesh.boundsMax + vec3<f32>(padding);
+    
+    // UVW coordinates
+    let uvw = (p - sdfBoundsMin) / max(sdfBoundsMax - sdfBoundsMin, vec3<f32>(0.001));
+    
+    if (any(uvw < vec3<f32>(0.0)) || any(uvw > vec3<f32>(1.0))) {
+        return Infinity;
     }
-
-    return minDist;
+    
+    let gridRes = vec3<f32>(128.0, 128.0, 128.0);
+    // bilinear interpolation
+    let sdfPos = uvw * gridRes - 0.5;
+    let i0_i = vec3<i32>(floor(sdfPos));
+    let i1_i = i0_i + vec3<i32>(1);
+    
+    let i0 = vec3<u32>(clamp(i0_i, vec3<i32>(0), vec3<i32>(127)));
+    let i1 = vec3<u32>(clamp(i1_i, vec3<i32>(0), vec3<i32>(127)));
+    let f = fract(max(sdfPos, vec3<f32>(0.0)));
+    
+    let idx000 = i0.x + i0.y * 128u + i0.z * 128u * 128u;
+    let idx001 = i0.x + i0.y * 128u + i1.z * 128u * 128u;
+    let idx010 = i0.x + i1.y * 128u + i0.z * 128u * 128u;
+    let idx011 = i0.x + i1.y * 128u + i1.z * 128u * 128u;
+    let idx100 = i1.x + i0.y * 128u + i0.z * 128u * 128u;
+    let idx101 = i1.x + i0.y * 128u + i1.z * 128u * 128u;
+    let idx110 = i1.x + i1.y * 128u + i0.z * 128u * 128u;
+    let idx111 = i1.x + i1.y * 128u + i1.z * 128u * 128u;
+    let sdf000 = sdfBuffer[idx000];
+    let sdf001 = sdfBuffer[idx001];
+    let sdf010 = sdfBuffer[idx010];
+    let sdf011 = sdfBuffer[idx011];
+    let sdf100 = sdfBuffer[idx100];
+    let sdf101 = sdfBuffer[idx101];
+    let sdf110 = sdfBuffer[idx110];
+    let sdf111 = sdfBuffer[idx111];
+    let sdf00 = mix(sdf000, sdf100, f.x);
+    let sdf01 = mix(sdf001, sdf101, f.x);
+    let sdf10 = mix(sdf010, sdf110, f.x);
+    let sdf11 = mix(sdf011, sdf111, f.x);
+    let sdf0 = mix(sdf00, sdf10, f.y);
+    let sdf1 = mix(sdf01, sdf11, f.y);
+    let sdf = mix(sdf0, sdf1, f.z);
+    return sdf;
 }
 
 fn sigmoid(x: f32) -> f32 {

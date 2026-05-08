@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include "Bouthors_Texture_Definitions.h"
+#include "sdfhandler.h"
 #include "tiny_obj_loader.h"
 
 void Application::initBuffers() {
@@ -258,7 +259,7 @@ void Application::initBuffers() {
 }
 
 void Application::initBindGroup() {
-    std::vector<wgpu::BindGroupEntry> entries(8);
+    std::vector<wgpu::BindGroupEntry> entries(10);
 
     entries[0].binding = 0;
     entries[0].buffer = m_uniformBuffer;
@@ -298,6 +299,14 @@ void Application::initBindGroup() {
     entries[7].offset = 0;
     entries[7].size = wgpu::kWholeSize;
 
+    entries[8].binding = 8;
+    entries[8].buffer = m_sdfBuffer;
+    entries[8].offset = 0;
+    entries[8].size = wgpu::kWholeSize;
+
+    entries[9].binding = 9;
+    entries[9].sampler = m_texSampler;
+
     wgpu::BindGroupDescriptor bindGroupDesc;
     bindGroupDesc.layout = m_bindGroupLayout;
     bindGroupDesc.entryCount = (uint32_t)entries.size();
@@ -306,7 +315,7 @@ void Application::initBindGroup() {
 }
 
 void Application::initBindGroupLayout() {
-    std::vector<wgpu::BindGroupLayoutEntry> bindings(8);
+    std::vector<wgpu::BindGroupLayoutEntry> bindings(10);
 
     bindings[0].binding = 0;
     bindings[0].buffer.type = wgpu::BufferBindingType::Uniform;
@@ -348,6 +357,15 @@ void Application::initBindGroupLayout() {
     bindings[7].buffer.type = wgpu::BufferBindingType::ReadOnlyStorage;
     bindings[7].buffer.minBindingSize = 0;
     bindings[7].visibility = wgpu::ShaderStage::Compute;
+
+    bindings[8].binding = 8;
+    bindings[8].buffer.type = wgpu::BufferBindingType::ReadOnlyStorage;
+    bindings[8].buffer.minBindingSize = 0;
+    bindings[8].visibility = wgpu::ShaderStage::Compute;
+
+    bindings[9].binding = 9;
+    bindings[9].sampler.type = wgpu::SamplerBindingType::Filtering;
+    bindings[9].visibility = wgpu::ShaderStage::Compute;
 
     wgpu::BindGroupLayoutDescriptor bindGroupLayoutDesc;
     bindGroupLayoutDesc.entryCount = (uint32_t)bindings.size();
@@ -513,4 +531,22 @@ void Application::loadCloudMesh() {
     metaDesc.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
     m_cloudMeshBuffer = m_device.CreateBuffer(&metaDesc);
     m_queue.WriteBuffer(m_cloudMeshBuffer, 0, &meta, sizeof(meta));
+
+    // Generate SDF Texture
+    glm::uvec3 sdfRes(128, 128, 128);
+    // Expand bounds slightly to give room outside the mesh
+    glm::vec3 sdfBoundsMin = boundsMin - glm::vec3(meta.shellThickness * 1.5f);
+    glm::vec3 sdfBoundsMax = boundsMax + glm::vec3(meta.shellThickness * 1.5f);
+    std::vector<float> sdfData =
+        SDFHandler::generateSDF(tris, sdfBoundsMin, sdfBoundsMax, sdfRes);
+
+    wgpu::BufferDescriptor sdfDesc{};
+    sdfDesc.label = "SDF Buffer";
+    sdfDesc.size = sdfData.size() * sizeof(float);
+    sdfDesc.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
+    m_sdfBuffer = m_device.CreateBuffer(&sdfDesc);
+    m_queue.WriteBuffer(m_sdfBuffer, 0, sdfData.data(), sdfDesc.size);
+    std::cout << "Generated SDF: " << sdfData.size()
+              << " floats for resolution " << sdfRes.x << "x" << sdfRes.y << "x"
+              << sdfRes.z << std::endl;
 }
