@@ -71,15 +71,32 @@ std::vector<float> SDFHandler::generateSDF(
             for (uint32_t x = 0; x < gridRes.x; ++x) {
                 glm::vec3 p = boundsMin + glm::vec3(x, y, z) * cellSize;
                 float minDist = 1e6f;
+                bool isInside = false;
                 // Brute force distance
                 for (const auto& tri : triangles) {
                     glm::vec3 closest =
                         closestPointOnTriangle(p, tri.v0, tri.v1, tri.v2);
+                    // if closest point is inside the triangle/mesh, we mark it
+                    // as inside
+
                     float dist = glm::distance(p, closest);
-                    if (dist < minDist)
+                    if (dist < minDist) {
                         minDist = dist;
+                        glm::vec3 edge1 = tri.v1 - tri.v0;
+                        glm::vec3 edge2 = tri.v2 - tri.v0;
+                        glm::vec3 normal =
+                            glm::normalize(glm::cross(edge1, edge2));
+                        // if the point is behind the triangle plane, we
+                        // consider it inside
+                        if (glm::dot(p - closest, normal) < 0.0f) {
+                            isInside = true;
+                        } else {
+                            isInside = false;
+                        }
+                    }
                 }
-                sdf[z * gridRes.y * gridRes.x + y * gridRes.x + x] = minDist;
+                sdf[z * gridRes.y * gridRes.x + y * gridRes.x + x] =
+                    minDist * (isInside ? 1.0f : -1.0f);
             }
         }
     }

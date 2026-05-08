@@ -104,6 +104,7 @@ class Application {
     wgpu::TextureView m_outputTextureView = nullptr;
     uint32_t m_textureWidth = 0;
     uint32_t m_textureHeight = 0;
+    float m_renderScale = 1.0f;
 
     uint32_t m_frameCount = 0;
 
@@ -124,7 +125,7 @@ class Application {
     void toggleMouseCapture();
 
     wgpu::Buffer m_triangleBuffer;
-    uint32_t   m_triangleCount = 0;
+    uint32_t m_triangleCount = 0;
     wgpu::Buffer m_cloudMeshBuffer;
     wgpu::Buffer m_higherOrderTableBuffer;
     wgpu::Texture m_higherOrderTexture;
@@ -135,4 +136,3 @@ class Application {
 
     void loadCloudMesh();
 };
-
