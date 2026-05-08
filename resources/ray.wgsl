@@ -302,7 +302,7 @@ fn sigmoid(x: f32) -> f32 {
 fn cloudDensity(p: vec3<f32>) -> f32 {
     let D    = distToCloudSurface(p);
     // Only apply noise in the shell layer of thickness h
-    let h    = cloudMesh.shellThickness * 100.0f;
+    let h    = cloudMesh.shellThickness;
     var rho  = 0.0f;
     if (D < 0.0) {
         // Outside cloud
@@ -321,7 +321,7 @@ fn cloudDensity(p: vec3<f32>) -> f32 {
 
 // Extinction at p (Eq. 4: κ = ρ N0 π re²)
 fn extinction(p: vec3<f32>) -> f32 {
-    return KAPPA_BASE * cloudDensity(p);
+    return KAPPA_BASE * cloudDensity(p) * SCALE;
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +396,9 @@ fn orderSetInfo(setIdx: u32) -> OrderSetInfo {
     }
 }
 
+// scale factor to map scene units to table domains
+const SCALE: f32 = 100.0;
+
 const HO_W: u32 = 64u;
 const HO_H: u32 = 64u;
 const HO_LAYER_COUNT: u32 = 49u;
@@ -469,7 +472,7 @@ fn mu_L_to_uv(order: i32, mu_L: f32) -> f32 {
 
 fn t_to_uv(order: i32, t: f32) -> f32 {
     let idx = clampOrderIndex(order);
-    return normalizeToUnit(t, T_MIN_BY_ORDER[idx] / 100.0f, T_MAX_BY_ORDER[idx] / 100.0f);
+    return normalizeToUnit(t, T_MIN_BY_ORDER[idx] / SCALE, T_MAX_BY_ORDER[idx] / SCALE);
 }
 
 fn sampleTexA(order: i32, t:f32, mu_V: f32) -> f32 {
@@ -661,7 +664,7 @@ fn findCollector(
     var c_world = p + wL * d0;   // project p onto lit surface along wL
     var sigma   = 50.0f;         // large initial sigma
 
-    var T_result = 0.0f;
+    var T_result = -1.0f;
 
     for (var iter = 0u; iter < MAX_COLLECTOR_ITERS; iter++) {
         // Step 2: project collector centre along light to lit cloud surface
@@ -689,7 +692,7 @@ fn findCollector(
 
         // Get canonical collector at these slab params (Section 5.2)
         let col_canonical = canonicalCollector(V_cos, L_cos, psiV, d_c, t_c, setIdx);
-        T_result          = canonicalT(V_cos, L_cos, cosTheta, d_c, t_c, setIdx);
+        // T_result          = canonicalT(V_cos, L_cos, cosTheta, d_c, t_c, setIdx);
 
         // Transform canonical collector centre to world space
         let c_new_local = col_canonical.center; // (cx, 0, cz) in slab frame
@@ -712,7 +715,11 @@ fn findCollector(
         if (stepLen < 0.01 * sigma_new) {
             c_world = c_clamped;
             sigma   = sigma_new;
+            T_result          = canonicalT(V_cos, L_cos, cosTheta, d_c, t_c, setIdx);
             break;
+        }
+        if (iter == MAX_COLLECTOR_ITERS - 1u) {
+            T_result          = canonicalT(V_cos, L_cos, cosTheta, d_c, t_c, setIdx);
         }
 
         c_world = c_clamped;
@@ -791,12 +798,15 @@ fn singleScattering(
     let cosTheta = dot(-rayDir, wL);  // wV · wL (wV = -rayDir)
     let mie      = miePhaseFnRGB(cosTheta);
 
-    var transmittance = 0.0f; // accumulated optical depth from eye to current sample
+    var viewOpticalDepth = 0.0f; // accumulated optical depth from cloud entry
 
     for (var i = 0u; i < SS_SAMPLES; i++) {
         // Exponentially spaced samples (denser near entry; Section 6.2)
         let fi     = f32(i) / f32(SS_SAMPLES);
         let fi1    = f32(i + 1u) / f32(SS_SAMPLES);
+        
+        let dx     = (fi1 - fi) * (tExit - tEntry);
+        
         let xi     = tEntry + fi  * (tExit - tEntry);
         let xi1    = tEntry + fi1 * (tExit - tEntry);
         let pSample = rayOrigin + rayDir * ((xi + xi1) * 0.5);
@@ -813,12 +823,16 @@ fn singleScattering(
         }
 
         // Eq. 1 from paper (single scattering term)
-        // Contribution = Mie(θ) · κ · e^{-κ(x + l(x))} · dx
-        let xi_li  = kappa * xi  + li;
-        let xi1_li = kappa * xi1 + li;
+        // We use the distance traversed *inside* the cloud to avoid camera-distance issues.
+        let local_xi = viewOpticalDepth;
+        let local_xi1 = viewOpticalDepth + kappa * dx;
+        
+        let xi_li  = local_xi  + li;
+        let xi1_li = local_xi1 + li;
         let contrib = mie * (exp(-xi_li) - exp(-xi1_li));
 
         color += contrib * SUN_COLOR * SUN_INTENSITY;
+        viewOpticalDepth = local_xi1;
     }
 
     return max(color, vec3<f32>(0.0));
@@ -832,22 +846,20 @@ fn singleScattering(
 const OPACITY_SAMPLES = 32u;
 
 fn computeOpacity(rayOrigin: vec3<f32>, rayDir: vec3<f32>, tEntry: f32, tExit: f32) -> f32 {
-    let segLen = (tExit - tEntry) / f32(OPACITY_SAMPLES);
-    var alpha  = 0.0f;
+    let stepSize = (tExit - tEntry) / f32(OPACITY_SAMPLES);
+    var opticalDepth = 0.0f;
 
     for (var i = 0u; i < OPACITY_SAMPLES; i++) {
-        let fi     = f32(i) / f32(OPACITY_SAMPLES);
-        let fi1    = f32(i + 1u) / f32(OPACITY_SAMPLES);
-        let xi     = tEntry + fi  * (tExit - tEntry);
-        let xi1    = tEntry + fi1 * (tExit - tEntry);
-        let pSamp  = rayOrigin + rayDir * ((xi + xi1) * 0.5);
+        let fi     = (f32(i) + 0.5) / f32(OPACITY_SAMPLES);
+        let dSamp  = tEntry + fi * (tExit - tEntry);
+        let pSamp  = rayOrigin + rayDir * dSamp;
         let kappa  = extinction(pSamp);
 
-        // αi = ∫ e^{-κx} dx ≈ e^{-κ xi+1} - e^{-κ xi}  (Eq. 2)
-        let ai = exp(-kappa * xi) - exp(-kappa * xi1);
-        alpha += ai;
+        opticalDepth += kappa * stepSize;
     }
-    return clamp(alpha, 0.0, 1.0);
+    
+    // Opacity is 1.0 - Transmittance
+    return clamp(1.0 - exp(-opticalDepth), 0.0, 1.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -979,6 +991,7 @@ fn renderPixel(pixelCoord: vec2<f32>, dims: vec2<f32>, seed: ptr<function, u32>)
     // Background sky
     if (!hit.hit || hit.tEntry >= Infinity) {
         return getSkyColor(ray.direction);
+        // return vec3<f32>(0.0); // black background for debugging
     }
 
     let tEntry = max(hit.tEntry, 0.0);
@@ -998,16 +1011,20 @@ fn renderPixel(pixelCoord: vec2<f32>, dims: vec2<f32>, seed: ptr<function, u32>)
 
     // ---- Multiple scattering (Section 6.1) ----
     let mask   = settings.scatteringOrderMask;
-    // let msContrib = multipleScattering(pMid, wV, wL, mask);
+    let msContrib = multipleScattering(pMid, wV, wL, mask);
 
     // ---- Single scattering (Section 6.2) ----
-    let ssContrib = singleScattering(ray.origin, ray.direction, tEntry, tExit, wL);
+    var ssContrib = vec3<f32>(0.0);
+    if ((mask & (1u << 8u)) != 0u) { // bit 8 enables single scattering
+        ssContrib = singleScattering(ray.origin, ray.direction, tEntry, tExit, wL);
+    }
 
     // ---- Opacity (Section 6.3) ----
-    let alpha  = 1.0f; //computeOpacity(ray.origin, ray.direction, tEntry, tExit);
+    let alpha  = computeOpacity(ray.origin, ray.direction, tEntry, tExit);
+    // return vec3<f32>(alpha);
 
     // ---- Composite (Eq. deferred shading, Section 8.1) ----
-    let cloudRadiance = ssContrib;
+    let cloudRadiance = msContrib + ssContrib;
 
     // Alpha-blend with sky
     let bg     = getSkyColor(ray.direction);
@@ -1039,6 +1056,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     color /= f32(samples);
 
     // Tone-map and write
-    let mapped = tonemap(color);
+    // let mapped = tonemap(color);
+    let mapped = color;
     textureStore(outputTex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4<f32>(mapped, 1.0));
 }

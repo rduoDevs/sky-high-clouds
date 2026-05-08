@@ -62,7 +62,7 @@ void Application::initBuffers() {
     m_raySettingsData = {
         .maxBounces = 2,
         .antiAliasingSamples = 1,
-        .scatteringOrderMask = 0x7Fu,
+        .scatteringOrderMask = 0xFFF,
         ._pad = 0,
     };
 
@@ -504,7 +504,7 @@ void Application::loadCloudMesh() {
     meta.triangleOffset = 0;
     meta.triangleCount = m_triangleCount;
     // meta.shellThickness = 0.3f;
-    meta.shellThickness = 0.05f;
+    meta.shellThickness = 0.5f;
 
     wgpu::BufferDescriptor metaDesc{};
     metaDesc.label = "Cloud Mesh Buffer";
