@@ -504,7 +504,7 @@ void Application::loadCloudMesh() {
     meta.triangleOffset = 0;
     meta.triangleCount = m_triangleCount;
     // meta.shellThickness = 0.3f;
-    meta.shellThickness = 0.5f;
+    meta.shellThickness = 0.42f;
 
     wgpu::BufferDescriptor metaDesc{};
     metaDesc.label = "Cloud Mesh Buffer";

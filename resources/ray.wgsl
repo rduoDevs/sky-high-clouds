@@ -1,13 +1,4 @@
-// =============================================================================
-//  Interactive Multiple Anisotropic Scattering in Clouds
-//  Bouthors et al., I3D 2008
-//  WGSL Compute Shader Implementation
-// =============================================================================
-
-// ---------------------------------------------------------------------------
-//  Structs
-// ---------------------------------------------------------------------------
-
+//structs
 struct Camera {
     position : vec3<f32>,
     rotation : vec3<f32>,
@@ -108,9 +99,7 @@ struct CollectorResult {
     T        : f32
 };
 
-// ---------------------------------------------------------------------------
-//  Bindings
-// ---------------------------------------------------------------------------
+//binds
 
 @group(0) @binding(0) var<uniform>       camera            : Camera;
 @group(0) @binding(1) var<storage, read> world             : World;
@@ -121,9 +110,7 @@ struct CollectorResult {
 @group(0) @binding(6) var<uniform>       cloudMesh         : CloudMesh;
 @group(0) @binding(7) var<storage, read> higherOrderTables : array<f32>;
 
-// ---------------------------------------------------------------------------
-//  Constants
-// ---------------------------------------------------------------------------
+//const
 
 const Infinity     = 1e6f;
 const GroundYLevel = -1.0f;
@@ -131,16 +118,16 @@ const EPSILON      = 1e-4f;
 const PI           = 3.14159265359f;
 const TWO_PI       = 6.28318530718f;
 
-const KAPPA_BASE = 0.05f;
-const MIE_G      = 0.85f;
+const EXTINCTION_FACTOR = 0.017f;
+const MIE_G      = 0.75f;
 
 const NUM_MS_SETS = 8u;
 
 const SUN_DIR       = vec3<f32>(0.577, 0.816, 0.0);
-const SUN_COLOR     = vec3<f32>(1.0, 0.97, 0.9);
+const SUN_COLOR     = vec3<f32>(1.0,0.98,0.96);
 const SUN_INTENSITY = 3.0f;
 const SKY_COLOR_TOP = vec3<f32>(0.35, 0.55, 0.95);
-const SKY_COLOR_BOT = vec3<f32>(0.7, 0.6, 0.5);
+const SKY_COLOR_BOT = vec3<f32>(0.2, 0.1, 0.0);
 
 const SCALE: f32 = 100.0;
 
@@ -239,6 +226,48 @@ fn fbm(p: vec3<f32>) -> f32 {
     }
     return val;
 }
+
+fn worley3D(p: vec3<f32>) -> f32 {
+    let pi = floor(p);
+    let pf = fract(p);
+
+    var minDist = 1.0;
+
+    for (var x = -1; x <= 1; x++) {
+        for (var y = -1; y <= 1; y++) {
+            for (var z = -1; z <= 1; z++) {
+                let neighbor = vec3<f32>(f32(x), f32(y), f32(z));
+                let cellPos = pi + neighbor;
+                let randomPoint = hash3(cellPos);
+
+                let diff = neighbor + randomPoint - pf;
+                let dist = length(diff);
+
+                minDist = min(minDist, dist);
+            }
+        }
+    }
+
+    return clamp(minDist, 0.0, 1.0);
+}
+
+fn worleyFbm(p: vec3<f32>) -> f32 {
+    var value = 0.0;
+    var amplitude = 0.5;
+    var frequency = 1.0;
+    var norm = 0.0;
+
+    for (var i = 0; i < 3; i++) {
+        value += amplitude * worley3D(p * frequency);
+        norm += amplitude;
+
+        frequency *= 2.0;
+        amplitude *= 0.5;
+    }
+
+    return clamp(value / max(norm, 1e-5), 0.0, 1.0);
+}
+
 
 // ---------------------------------------------------------------------------
 //  Phase functions
@@ -405,22 +434,50 @@ fn closestPointOnTriangle(
     return a + ab * v + ac * w;
 }
 
-fn distToCloudSurface(p: vec3<f32>) -> f32 {
-    // go through the mesh and find the closest point on any triangle, then return the distance to that point. This is a brute-force approach and can be optimized with spatial data structures, but it's straightforward for our purposes.
-    var minDist = Infinity;
+fn pointInsideCloudMesh(p: vec3<f32>) -> bool {
+    // Cast in a non-axis-aligned direction to reduce edge/vertex degeneracies.
+    let dir = normalize(vec3<f32>(0.754877, 0.569840, 0.322570));
+    let ray = Ray(p + dir * EPSILON, dir);
+
+    var hits = 0u;
     let offset = cloudMesh.triangleOffset;
     let count  = cloudMesh.triangleCount;
+
+    for (var i = 0u; i < count; i++) {
+        let tri = triangles[offset + i];
+        let hit = rayTriIntersect(ray, tri);
+
+        if (hit.t < Infinity) {
+            hits += 1u;
+        }
+    }
+
+    return (hits & 1u) == 1u;
+}
+
+fn distToCloudSurface(p: vec3<f32>) -> f32 {
+    var minDist = Infinity;
+
+    let offset = cloudMesh.triangleOffset;
+    let count  = cloudMesh.triangleCount;
+
     for (var i = 0u; i < count; i++) {
         let tri = triangles[offset + i];
         let closest = closestPointOnTriangle(p, tri.v0, tri.v1, tri.v2);
         let dist = distance(p, closest);
+
         if (dist < minDist) {
             minDist = dist;
         }
     }
 
+    if (pointInsideCloudMesh(p)) {
+        return -minDist;
+    }
+
     return minDist;
 }
+
 
 fn sigmoid(x: f32) -> f32 {
     return 1.0 / (1.0 + exp(-x * 5.0));
@@ -433,43 +490,49 @@ fn getTime() -> f32 {
 fn cloudDensity(p: vec3<f32>) -> f32 {
     let time = getTime();
 
-    // Drift vectors — slightly different speeds per axis avoids directional
-    // streaking. The shell uses a faster drift so wisps morph quickly;
-    // the macro field uses a slower drift so the bulk shape evolves gently.
-    let driftFast = vec3<f32>(time * 0.08, time * 0.02, time * 0.05);
+    let driftFast = vec3<f32>(time * 0.08, time * 0.02, time * 0.05) * vec3<f32>(10.0,10.0,10.0);
     let driftSlow = vec3<f32>(time * 0.03, time * 0.015, time * 0.02);
 
-    // Spatio-temporal density modulator: a low-frequency 3D noise field that
-    // breathes through the cloud volume, creating dissipation pockets that
-    // cut diagonally through the cloud rather than tracking the AABB. This
-    // is what keeps the box silhouette hidden when density drops locally.
-    let m        = perlin3D(p * 0.15 + driftSlow);
-    let densityField = clamp(0.6 + m * 1.6, 0.0, 1.4);
-
-    // Gentle whole-cloud breathing — a global rhythm on top of everything
-    let breathe = 0.85 + 0.15 * sin(time * 0.30);
-
     let D = distToCloudSurface(p);
-    let h = cloudMesh.shellThickness;
+    let h = max(cloudMesh.shellThickness, 0.01);
 
-    var rho = 0.0f;
-    if (D < 0.0) {
-        rho = 0.0;
-    } else if (D < h) {
-        // Shell wisps advect through the FBM field — edges constantly evolve
-        let noiseScale = 4.0 / max(h, 0.01);
-        let n          = fbm(p * noiseScale + driftFast) * 2.0 - 1.0;
-        rho = sigmoid(D / h * 3.0 + n * 2.0);
-    } else {
-        rho = 1.0;
+    if (D > 0.0) {
+        return 0.0;
     }
 
-    rho *= densityField * breathe;
+    let depth = -D;
+    let edge = clamp(depth / h, 0.0, 1.0);
+
+    let macroPerlin = clamp(0.5 + fbm(p * 0.18 + driftFast) * 1.35, 0.0, 1.0);
+    let macroWorley = 1.0 - worleyFbm(p * 0.2 + driftFast * 0.6);
+    let billow = clamp(mix(macroPerlin, macroWorley, 0.5), 0.0, 1.0);
+
+    let shellPerlin = fbm(p * (4.0 / h) + driftFast) * 2.0 - 1.0;
+    let shellWorley = 1.0 - worleyFbm(p * (1.7 / h) + driftFast * 0.8);
+
+    var rho = 0.0;
+
+    if (depth < h) {
+        let shellNoise = shellPerlin * 0.85 + shellWorley * 0.75;
+        rho = sigmoid(edge * 3.0 + shellNoise * 1.25);
+    } else {
+        // Avoid a fully saturated core; keep some cellular variation inside.
+        rho = 0.65 + billow * 0.35;
+    }
+
+    // Erode mostly near the boundary, preserving the core.
+    let erosion = (1.0 - shellWorley) * (1.0 - edge) * 0.35;
+    rho = max(rho - erosion, 0.0);
+
+    let breathe = 0.85 + 0.15 * sin(time * 0.30);
+    rho *= mix(0.75, 1.25, billow) * breathe;
+
     return clamp(rho, 0.0, 1.0);
 }
 
+
 fn extinction(p: vec3<f32>) -> f32 {
-    return KAPPA_BASE * cloudDensity(p) * SCALE;
+    return EXTINCTION_FACTOR * cloudDensity(p) * SCALE;
 }
 
 fn shadowOpticalDepth(p: vec3<f32>, wL: vec3<f32>) -> f32 {
@@ -748,7 +811,7 @@ fn litSurfaceRadiance(cPos: vec3<f32>, wL: vec3<f32>) -> vec3<f32> {
     var sunContrib = SUN_COLOR * SUN_INTENSITY;
     if (hitAbove.hit) {
         let atmDist = hitAbove.tEntry;
-        sunContrib *= exp(-KAPPA_BASE * atmDist * 2.0);
+        sunContrib *= exp(-EXTINCTION_FACTOR * atmDist * 2.0);
     }
     let skyContrib = mix(SKY_COLOR_BOT, SKY_COLOR_TOP,
                          clamp(wL.y * 0.5 + 0.5, 0.0, 1.0)) * 0.5;
@@ -821,7 +884,7 @@ fn computeOpacity(rayOrigin: vec3<f32>, rayDir: vec3<f32>, tEntry: f32, tExit: f
 fn getSkyColor(dir: vec3<f32>) -> vec3<f32> {
     let t = 0.5 * (dir.y + 1.0);
     if (dir.y < 0.0) {
-        return mix(vec3<f32>(0.39, 0.25, 0.09), vec3<f32>(0.7, 0.8, 1.0), t);
+        return mix(SKY_COLOR_BOT, vec3<f32>(0.7, 0.8, 1.0), t);
     } else {
         let sunIntensity = max(dot(dir, SUN_DIR), 0.0);
         let sunColor = vec3<f32>(1.0, 0.9, 0.7) * pow(sunIntensity, 100.0);
@@ -899,7 +962,7 @@ fn renderPixel(pixelCoord: vec2<f32>, dims: vec2<f32>, seed: ptr<function, u32>)
     let wV = -ray.direction;
 
     let mask      = settings.scatteringOrderMask;
-    let msContrib = multipleScattering(pMid, wV, wL, mask);
+    let msContrib = multipleScattering(pEntry, wV, wL, mask);
 
     var ssContrib = vec3<f32>(0.0);
     if ((mask & (1u << 8u)) != 0u) {
@@ -910,6 +973,8 @@ fn renderPixel(pixelCoord: vec2<f32>, dims: vec2<f32>, seed: ptr<function, u32>)
     let cloudRadiance = msContrib + ssContrib;
     let bg            = getSkyColor(ray.direction);
     return cloudRadiance * alpha + bg * (1.0 - alpha);
+    //return vec3<f32>(computeOpacity(ray.origin, ray.direction, tEntry, tExit));
+
 }
 
 @compute @workgroup_size(8, 8, 1)
