@@ -288,9 +288,6 @@ fn rayTriIntersect(ray: Ray, tri: Triangle) -> TriHit {
 }
 
 fn intersectFromInside(ray: Ray) -> InsideHit {
-    if (rayAABBMisses(ray, cloudMesh.boundsMin, cloudMesh.boundsMax)) {
-        return InsideHit(Infinity, vec3<f32>(0.0), false);
-    }
     var tFirst = Infinity;
     var nFirst = vec3<f32>(0.0);
     let offset = cloudMesh.triangleOffset;
@@ -306,21 +303,7 @@ fn intersectFromInside(ray: Ray) -> InsideHit {
     return InsideHit(tFirst, nFirst, tFirst < Infinity);
 }
 
-fn rayAABBMisses(ray: Ray, boundsMin: vec3<f32>, boundsMax: vec3<f32>) -> bool {
-    let invDir = 1.0 / ray.direction;
-    let t0 = (boundsMin - ray.origin) * invDir;
-    let t1 = (boundsMax - ray.origin) * invDir;
-    let tmin = min(t0, t1);
-    let tmax = max(t0, t1);
-    let tNear = max(max(tmin.x, tmin.y), tmin.z);
-    let tFar = min(min(tmax.x, tmax.y), tmax.z);
-    return tNear > tFar || tFar < 0.0;
-}
-
 fn intersectCloudMesh(ray: Ray) -> MeshHit {
-    if (rayAABBMisses(ray, cloudMesh.boundsMin, cloudMesh.boundsMax)) {
-        return MeshHit(Infinity, -Infinity, vec3<f32>(0.0), vec3<f32>(0.0), false);
-    }
     var tEntry = Infinity;
     var tExit  = -Infinity;
     var nEntry = vec3<f32>(0.0);
@@ -429,6 +412,11 @@ fn distToCloudSurface(p: vec3<f32>) -> f32 {
     let count  = cloudMesh.triangleCount;
     for (var i = 0u; i < count; i++) {
         let tri = triangles[offset + i];
+        // only count triangle if we are on the back side (inside the cloud)
+        let toTri = tri.v0 - p;
+        if (dot(toTri, tri.normal) > 0.0) {
+            continue;
+        }
         let closest = closestPointOnTriangle(p, tri.v0, tri.v1, tri.v2);
         let dist = distance(p, closest);
         if (dist < minDist) {
@@ -485,9 +473,13 @@ fn getTime() -> f32 {
 //     return clamp(rho, 0.0, 1.0);
 // }
 fn cloudDensity(p: vec3<f32>) -> f32 {
+    let h    = cloudMesh.shellThickness;
+    if (any(p < cloudMesh.boundsMin - h) || any(p > cloudMesh.boundsMax + h)) {
+        return 0.0;
+    }
+
     let D    = distToCloudSurface(p);
     // Only apply noise in the shell layer of thickness h
-    let h    = cloudMesh.shellThickness;
     var rho  = 0.0f;
     if (D < 0.0) {
         // Outside cloud
@@ -820,11 +812,13 @@ fn singleScattering(rayOrigin: vec3<f32>, rayDir: vec3<f32>,
 
         let kappa     = extinction(pSample);
         let shadowRay = Ray(pSample + wL * EPSILON, wL);
-        let shadowHit = intersectCloudMesh(shadowRay);
+        // let shadowHit = intersectCloudMesh(shadowRay);
         var li = 0.0f;
-        if (shadowHit.hit) {
-            li = shadowOpticalDepth(pSample, wL);
-        }
+        // if (shadowHit.hit) {
+            // li = shadowOpticalDepth(pSample, wL);
+            // extinction
+            // li = kappa * shadowHit.tEntry;
+        // }
 
         let local_xi  = viewOpticalDepth;
         let local_xi1 = viewOpticalDepth + kappa * dx;
