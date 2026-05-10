@@ -65,6 +65,8 @@ void Application::initBuffers() {
         .antiAliasingSamples = 1,
         .scatteringOrderMask = 0xFFF,
         ._pad = 0,
+        .scale = 200.0f,
+        ._pad2 = {0, 0, 0},
     };
 
     const FrameCountData frameData = {.frameCount = 0, ._pad = {0, 0, 0}};
@@ -480,10 +482,9 @@ void Application::loadCloudMesh() {
                translate;
     };
     auto getNormal = [&](int idx) {
-        return glm::vec3(
-            attrib.normals[3 * idx + 0],
-            attrib.normals[3 * idx + 1],
-            attrib.normals[3 * idx + 2]);
+        return glm::vec3(attrib.normals[3 * idx + 0],
+                         attrib.normals[3 * idx + 1],
+                         attrib.normals[3 * idx + 2]);
     };
 
     for (const auto& shape : shapes) {

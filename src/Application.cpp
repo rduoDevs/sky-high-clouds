@@ -629,8 +629,15 @@ void Application::onGui(RenderPassEncoder renderPass) {
     glfwGetFramebufferSize(m_window, &fbW, &fbH);
     ImGui::Text("%dx%d → %dx%d", fbW, fbH, (int)(fbW * m_renderScale),
                 (int)(fbH * m_renderScale));
-    ImGui::End();
 
+    ImGui::SeparatorText("World Scale");
+    float scale = m_raySettingsData.scale;
+    if (ImGui::SliderFloat("World Scale", &scale, 1.0f, 500.0f, "%.1f")) {
+        m_raySettingsData.scale = scale;
+        m_frameCount = 0;
+    }
+
+    ImGui::End();
     ImGui::Render();
     ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), renderPass.Get());
 }

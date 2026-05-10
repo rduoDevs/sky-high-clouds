@@ -47,7 +47,11 @@ struct Settings {
     maxBounces          : u32,
     antiAliasingSamples : u32,
     scatteringOrderMask : u32,
-    pad_0               : u32
+    pad_0               : u32,
+    scale               : f32,
+    pad_1               : u32,
+    pad_2               : u32,
+    pad_3               : u32,
 };
 
 struct Triangle {
@@ -132,7 +136,7 @@ const SUN_INTENSITY = 3.0f;
 const SKY_COLOR_TOP = vec3<f32>(0.35, 0.55, 0.95);
 const SKY_COLOR_BOT = vec3<f32>(0.2, 0.1, 0.0);
 
-const SCALE: f32 = 100.0;
+// SCALE is now a uniform field: `settings.scale` set from the GUI
 
 const HO_W           : u32 = 64u;
 const HO_H           : u32 = 64u;
@@ -229,48 +233,6 @@ fn fbm(p: vec3<f32>) -> f32 {
     }
     return val;
 }
-
-fn worley3D(p: vec3<f32>) -> f32 {
-    let pi = floor(p);
-    let pf = fract(p);
-
-    var minDist = 1.0;
-
-    for (var x = -1; x <= 1; x++) {
-        for (var y = -1; y <= 1; y++) {
-            for (var z = -1; z <= 1; z++) {
-                let neighbor = vec3<f32>(f32(x), f32(y), f32(z));
-                let cellPos = pi + neighbor;
-                let randomPoint = hash3(cellPos);
-
-                let diff = neighbor + randomPoint - pf;
-                let dist = length(diff);
-
-                minDist = min(minDist, dist);
-            }
-        }
-    }
-
-    return clamp(minDist, 0.0, 1.0);
-}
-
-fn worleyFbm(p: vec3<f32>) -> f32 {
-    var value = 0.0;
-    var amplitude = 0.5;
-    var frequency = 1.0;
-    var norm = 0.0;
-
-    for (var i = 0; i < 3; i++) {
-        value += amplitude * worley3D(p * frequency);
-        norm += amplitude;
-
-        frequency *= 2.0;
-        amplitude *= 0.5;
-    }
-
-    return clamp(value / max(norm, 1e-5), 0.0, 1.0);
-}
-
 
 // ---------------------------------------------------------------------------
 //  Phase functions
@@ -456,27 +418,6 @@ fn closestPointOnTriangle(
     return a + ab * v + ac * w;
 }
 
-fn pointInsideCloudMesh(p: vec3<f32>) -> bool {
-    // Cast in a non-axis-aligned direction to reduce edge/vertex degeneracies.
-    let dir = normalize(vec3<f32>(0.754877, 0.569840, 0.322570));
-    let ray = Ray(p + dir * EPSILON, dir);
-
-    var hits = 0u;
-    let offset = cloudMesh.triangleOffset;
-    let count  = cloudMesh.triangleCount;
-
-    for (var i = 0u; i < count; i++) {
-        let tri = triangles[offset + i];
-        let hit = rayTriIntersect(ray, tri);
-
-        if (hit.t < Infinity) {
-            hits += 1u;
-        }
-    }
-
-    return (hits & 1u) == 1u;
-}
-
 fn distToCloudSurface(p: vec3<f32>) -> f32 {
     let padding = cloudMesh.shellThickness * 1.5;
     let sdfBoundsMin = cloudMesh.boundsMin - vec3<f32>(padding);
@@ -571,6 +512,49 @@ fn getTime() -> f32 {
 //     rho *= densityField * breathe;
 //     return clamp(rho, 0.0, 1.0);
 // }
+
+
+fn worley3D(p: vec3<f32>) -> f32 {
+    let pi = floor(p);
+    let pf = fract(p);
+
+    var minDist = 1.0;
+
+    for (var x = -1; x <= 1; x++) {
+        for (var y = -1; y <= 1; y++) {
+            for (var z = -1; z <= 1; z++) {
+                let neighbor = vec3<f32>(f32(x), f32(y), f32(z));
+                let cellPos = pi + neighbor;
+                let randomPoint = hash3(cellPos);
+
+                let diff = neighbor + randomPoint - pf;
+                let dist = length(diff);
+
+                minDist = min(minDist, dist);
+            }
+        }
+    }
+
+    return clamp(minDist, 0.0, 1.0);
+}
+
+fn worleyFbm(p: vec3<f32>) -> f32 {
+    var value = 0.0;
+    var amplitude = 0.5;
+    var frequency = 1.0;
+    var norm = 0.0;
+
+    for (var i = 0; i < 3; i++) {
+        value += amplitude * worley3D(p * frequency);
+        norm += amplitude;
+
+        frequency *= 2.0;
+        amplitude *= 0.5;
+    }
+
+    return clamp(value / max(norm, 1e-5), 0.0, 1.0);
+}
+
 fn cloudDensity(p: vec3<f32>) -> f32 {
     let D    = distToCloudSurface(p);
     let time = getTime();
@@ -593,8 +577,51 @@ fn cloudDensity(p: vec3<f32>) -> f32 {
 }
 
 
+// fn cloudDensity(p: vec3<f32>) -> f32 {
+//     let time = getTime();
+
+//     let driftFast = vec3<f32>(time * 0.08, time * 0.02, time * 0.05) * vec3<f32>(10.0,10.0,10.0);
+//     let driftSlow = vec3<f32>(time * 0.03, time * 0.015, time * 0.02);
+
+//     let D = -distToCloudSurface(p);
+//     let h = max(cloudMesh.shellThickness, 0.01);
+
+//     if (D > 0.0) {
+//         return 0.0;
+//     }
+
+//     let depth = -D;
+//     let edge = clamp(depth / h, 0.0, 1.0);
+
+//     let macroPerlin = clamp(0.5 + fbm(p * 0.18 + driftFast) * 1.35, 0.0, 1.0);
+//     let macroWorley = 1.0 - worleyFbm(p * 0.2 + driftFast * 0.6);
+//     let billow = clamp(mix(macroPerlin, macroWorley, 0.5), 0.0, 1.0);
+
+//     let shellPerlin = fbm(p * (4.0 / h) + driftFast) * 2.0 - 1.0;
+//     let shellWorley = 1.0 - worleyFbm(p * (1.7 / h) + driftFast * 0.8);
+
+//     var rho = 0.0;
+
+//     if (depth < h) {
+//         let shellNoise = shellPerlin * 0.85 + shellWorley * 0.75;
+//         rho = sigmoid(edge * 3.0 + shellNoise * 1.25);
+//     } else {
+//         // Avoid a fully saturated core; keep some cellular variation inside.
+//         rho = 0.65 + billow * 0.35;
+//     }
+
+//     // Erode mostly near the boundary, preserving the core.
+//     let erosion = (1.0 - shellWorley) * (1.0 - edge) * 0.35;
+//     rho = max(rho - erosion, 0.0);
+
+//     let breathe = 0.85 + 0.15 * sin(time * 0.30);
+//     rho *= mix(0.75, 1.25, billow) * breathe;
+
+//     return clamp(rho, 0.0, 1.0);
+// }
+
 fn extinction(p: vec3<f32>) -> f32 {
-    return EXTINCTION_FACTOR * cloudDensity(p) * SCALE;
+    return EXTINCTION_FACTOR * cloudDensity(p) * settings.scale;
 }
 
 fn shadowOpticalDepth(p: vec3<f32>, wL: vec3<f32>) -> f32 {
@@ -667,7 +694,7 @@ fn setToTableIdx(setIdx: u32) -> u32 {
 
 fn t_to_uv_for_table(tableIdx: u32, t: f32) -> f32 {
     let idx = clampTableIdx(tableIdx);
-    return normalizeToUnit(t, T_MIN_BY_ORDER[idx] / SCALE, T_MAX_BY_ORDER[idx] / SCALE);
+    return normalizeToUnit(t, T_MIN_BY_ORDER[idx] / settings.scale, T_MAX_BY_ORDER[idx] / settings.scale);
 }
 
 fn mu_V_to_uv(mu_V: f32)   -> f32 { return normalizeToUnit(mu_V,        MU_V_MIN,    MU_V_MAX); }
@@ -1035,8 +1062,6 @@ fn renderPixel(pixelCoord: vec2<f32>, dims: vec2<f32>, seed: ptr<function, u32>)
     let cloudRadiance = msContrib + ssContrib;
     let bg            = getSkyColor(ray.direction);
     return cloudRadiance * alpha + bg * (1.0 - alpha);
-    //return vec3<f32>(computeOpacity(ray.origin, ray.direction, tEntry, tExit));
-
 }
 
 @compute @workgroup_size(8, 8, 1)
