@@ -219,7 +219,8 @@ bool Application::initWindow() {
     // Create window
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    m_window = glfwCreateWindow(640, 480, "Sky High Clouds | Physically-Accurate Clouds", NULL, NULL);
+    m_window = glfwCreateWindow(
+        640, 480, "Sky High Clouds | Physically-Accurate Clouds", NULL, NULL);
     if (!m_window) {
         std::cerr << "Could not open window!" << std::endl;
         return false;
@@ -308,9 +309,12 @@ void Application::initTextures() {
     if (height <= 0)
         height = 1;
 
-    m_textureWidth = width;
-    m_textureHeight = height;
-    wgpu::Extent3D textureSize = {(uint32_t)width, (uint32_t)height, 1};
+    int texWidth = std::max(1, (int)(width * m_renderScale));
+    int texHeight = std::max(1, (int)(height * m_renderScale));
+
+    m_textureWidth = texWidth;
+    m_textureHeight = texHeight;
+    wgpu::Extent3D textureSize = {(uint32_t)texWidth, (uint32_t)texHeight, 1};
 
     wgpu::TextureDescriptor textureDesc{};
     textureDesc.dimension = wgpu::TextureDimension::e2D;
@@ -435,8 +439,8 @@ void Application::initPresentPipeline() {
         m_device.CreatePipelineLayout(&pipelineLayoutDesc);
 
     wgpu::SamplerDescriptor samplerDesc{};
-    samplerDesc.minFilter = wgpu::FilterMode::Linear;
-    samplerDesc.magFilter = wgpu::FilterMode::Linear;
+    samplerDesc.minFilter = wgpu::FilterMode::Nearest;
+    samplerDesc.magFilter = wgpu::FilterMode::Nearest;
     samplerDesc.mipmapFilter = wgpu::MipmapFilterMode::Nearest;
     samplerDesc.addressModeU = wgpu::AddressMode::ClampToEdge;
     samplerDesc.addressModeV = wgpu::AddressMode::ClampToEdge;
@@ -573,12 +577,67 @@ void Application::onGui(RenderPassEncoder renderPass) {
     const float frameMs = (fps > 0.0f) ? (1000.0f / fps) : 0.0f;
     ImGui::Text("FPS: %.1f", fps);
     ImGui::Text("Frame time: %.3f ms", frameMs);
-    if (ImGui::Button("Save Output")) {
-        // TODO: Implement texture saving
-        std::cout << "Save output not yet implemented" << std::endl;
-    }
-    ImGui::End();
 
+    ImGui::SeparatorText("Scattering Orders");
+    for (uint32_t i = 0; i < 7; ++i) {
+        const uint32_t bit = (1u << i);
+        const bool enabled =
+            (m_raySettingsData.scatteringOrderMask & bit) != 0u;
+        std::string label = "Order " + std::to_string(i + 1);
+        if (ImGui::RadioButton(label.c_str(), enabled)) {
+            uint32_t nextMask = m_raySettingsData.scatteringOrderMask ^ bit;
+            // Keep at least one order enabled.
+            // if (nextMask == 0u) {
+            //     nextMask = bit;
+            // }
+            if (nextMask != m_raySettingsData.scatteringOrderMask) {
+                m_raySettingsData.scatteringOrderMask = nextMask;
+                m_frameCount = 0;
+            }
+        }
+        if (i < 6 && (i % 4) != 3) {
+            ImGui::SameLine();
+        }
+    }
+
+    if (ImGui::RadioButton(
+            "Single Scattering",
+            (m_raySettingsData.scatteringOrderMask & (1u << 8u)) != 0u)) {
+        m_raySettingsData.scatteringOrderMask ^= (1u << 8u);
+        m_frameCount = 0;
+    }
+
+    ImGui::SeparatorText("Render Resolution");
+    float renderScalePct = m_renderScale * 100.0f;
+    if (ImGui::SliderFloat("##resscale", &renderScalePct, 10.0f, 100.0f,
+                           "%.0f%%")) {
+        float newScale = renderScalePct / 100.0f;
+        if (newScale != m_renderScale) {
+            m_renderScale = newScale;
+            // Recreate the compute texture at the new resolution
+            terminateTextureViews();
+            terminateTextures();
+            initTextures();
+            initTextureViews();
+            initBindGroup();
+            initPresentBindGroup();
+            m_frameCount = 0;
+        }
+    }
+    // Optionally show the resolved pixel dimensions:
+    int fbW, fbH;
+    glfwGetFramebufferSize(m_window, &fbW, &fbH);
+    ImGui::Text("%dx%d → %dx%d", fbW, fbH, (int)(fbW * m_renderScale),
+                (int)(fbH * m_renderScale));
+
+    ImGui::SeparatorText("World Scale");
+    float scale = m_raySettingsData.scale;
+    if (ImGui::SliderFloat("World Scale", &scale, 1.0f, 500.0f, "%.1f")) {
+        m_raySettingsData.scale = scale;
+        m_frameCount = 0;
+    }
+
+    ImGui::End();
     ImGui::Render();
     ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), renderPass.Get());
 }
@@ -591,6 +650,8 @@ void Application::onCompute() {
 
     FrameCountData frameData = {m_frameCount, {0, 0, 0}};
     m_queue.WriteBuffer(m_frameCountBuffer, 0, &frameData, sizeof(frameData));
+    m_queue.WriteBuffer(m_settingsBuffer, 0, &m_raySettingsData,
+                        sizeof(m_raySettingsData));
 
     if (m_cameraDataUpdated) {
         m_queue.WriteBuffer(m_uniformBuffer, 0, &m_cameraData,

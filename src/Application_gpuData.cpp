@@ -2,8 +2,12 @@
 #include "Application.h"
 #include "gpuData.h"
 #define TINYOBJLOADER_IMPLEMENTATION
+#include <fstream>
+#include <string>
+#include <vector>
+#include "Bouthors_Texture_Definitions.h"
+#include "sdfhandler.h"
 #include "tiny_obj_loader.h"
-
 
 void Application::initBuffers() {
     wgpu::BufferDescriptor desc{};
@@ -54,25 +58,210 @@ void Application::initBuffers() {
     // world.spheres[1].material.emissionColorRefractive =
     //     glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
-    //world.spheres[2].centerRadius = glm::vec4(0.5f, 0.2f, -1.0f, 0.5f);
+    // world.spheres[2].centerRadius = glm::vec4(0.5f, 0.2f, -1.0f, 0.5f);
 
-    const RaySettingsData raySettings = {
+    m_raySettingsData = {
         .maxBounces = 2,
         .antiAliasingSamples = 1,
-        ._pad = {0, 0},
+        .scatteringOrderMask = 0xFFF,
+        ._pad = 0,
+        .scale = 200.0f,
+        ._pad2 = {0, 0, 0},
     };
 
     const FrameCountData frameData = {.frameCount = 0, ._pad = {0, 0, 0}};
 
+    // textures and samplers
+
+    wgpu::SamplerDescriptor samplerDesc{};
+    samplerDesc.addressModeU = wgpu::AddressMode::ClampToEdge;
+    samplerDesc.addressModeV = wgpu::AddressMode::ClampToEdge;
+    samplerDesc.magFilter = wgpu::FilterMode::Linear;
+    samplerDesc.minFilter = wgpu::FilterMode::Linear;
+
+    this->m_texSampler = m_device.CreateSampler(&samplerDesc);
+
+    // Load higher-order tables from raw text files and pack into a single float
+    // array
+    // const uint32_t TAB_W = 64u;
+    // const uint32_t TAB_H = 64u;
+    // const uint32_t TAB_LAYERS = 49u;  // 7 orders * 7 sections
+
+    // std::vector<std::string> tableFiles = {
+    //     "multiple_scattering_textures/tables/LogGaussAniso_A_1.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_A_2.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_A_3.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_A_4-5.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_A_6-8.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_A_9-14.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_A_15p.txt",
+
+    //     "multiple_scattering_textures/tables/LogGaussAniso_B1_1.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_B1_2.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_B1_3.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_B1_4-5.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_B1_6-8.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_B1_9-14.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_B1_15p.txt",
+
+    //     "multiple_scattering_textures/tables/LogGaussAniso_B2_1.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_B2_2.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_B2_3.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_B2_4-5.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_B2_6-8.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_B2_9-14.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_B2_15p.txt",
+
+    //     "multiple_scattering_textures/tables/LogGaussAniso_C_1.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_C_2.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_C_3.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_C_4-5.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_C_6-8.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_C_9-14.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_C_15p.txt",
+
+    //     "multiple_scattering_textures/tables/LogGaussAniso_D_1.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_D_2.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_D_3.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_D_4-5.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_D_6-8.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_D_9-14.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_D_15p.txt",
+
+    //     "multiple_scattering_textures/tables/LogGaussAniso_P_1.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_P_2.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_P_3.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_P_4-5.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_P_6-8.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_P_9-14.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_P_15p.txt",
+
+    //     "multiple_scattering_textures/tables/LogGaussAniso_X_1.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_X_2.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_X_3.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_X_4-5.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_X_6-8.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_X_9-14.txt",
+    //     "multiple_scattering_textures/tables/LogGaussAniso_X_15p.txt",
+    // };
+
+    // std::vector<float> allData;
+    // allData.reserve(TAB_W * TAB_H * TAB_LAYERS);
+
+    // for (size_t fi = 0; fi < tableFiles.size(); ++fi) {
+    //     const std::string path = std::string("./resources/") +
+    //     tableFiles[fi]; std::ifstream ifs(path); if (!ifs) {
+    //         std::cerr << "ERROR: Failed to open table file: " << path
+    //                   << std::endl;
+    //         // pad with zeros for this layer
+    //         for (uint32_t i = 0; i < TAB_W * TAB_H; ++i)
+    //             allData.push_back(0.0f);
+    //         continue;
+    //     }
+    //     // std::cout << "Loaded table: " << path << std::endl;
+    //     // parse whitespace separated floats
+    //     std::vector<float> layer;
+    //     layer.reserve(TAB_W * TAB_H);
+    //     float v;
+    //     while (ifs >> v) {
+    //         layer.push_back(v);
+    //     }
+    //     if (layer.size() != TAB_W * TAB_H) {
+    //         std::cerr << "Warning: table file " << path << " contains "
+    //                   << layer.size() << " floats (expected " << (TAB_W *
+    //                   TAB_H)
+    //                   << ")." << std::endl;
+    //         // pad or trim
+    //         layer.resize(TAB_W * TAB_H, 0.0f);
+    //     }
+    //     allData.insert(allData.end(), layer.begin(), layer.end());
+    // }
+
+    // std::cout << "Total table data loaded: " << allData.size()
+    //           << " floats (expected " << (TAB_W * TAB_H * TAB_LAYERS) << ")"
+    //           << std::endl;
+
+    std::vector<float> allData;
+    allData.reserve(64 * 64 * 49);  // 7 orders * 7 sections * 64*64 floats each
+    auto appendTable = [&allData](const float table[64][64]) {
+        for (size_t i = 0; i < 64; ++i) {
+            for (size_t j = 0; j < 64; ++j) {
+                allData.push_back(table[i][j]);
+            }
+        }
+    };
+    appendTable(LogGaussAniso_A_1);
+    appendTable(LogGaussAniso_A_2);
+    appendTable(LogGaussAniso_A_3);
+    appendTable(LogGaussAniso_A_4_5);
+    appendTable(LogGaussAniso_A_6_8);
+    appendTable(LogGaussAniso_A_9_14);
+    appendTable(LogGaussAniso_A_15p);
+    appendTable(LogGaussAniso_B1_1);
+    appendTable(LogGaussAniso_B1_2);
+    appendTable(LogGaussAniso_B1_3);
+    appendTable(LogGaussAniso_B1_4_5);
+    appendTable(LogGaussAniso_B1_6_8);
+    appendTable(LogGaussAniso_B1_9_14);
+    appendTable(LogGaussAniso_B1_15p);
+    appendTable(LogGaussAniso_B2_1);
+    appendTable(LogGaussAniso_B2_2);
+    appendTable(LogGaussAniso_B2_3);
+    appendTable(LogGaussAniso_B2_4_5);
+    appendTable(LogGaussAniso_B2_6_8);
+    appendTable(LogGaussAniso_B2_9_14);
+    appendTable(LogGaussAniso_B2_15p);
+    appendTable(LogGaussAniso_C_1);
+    appendTable(LogGaussAniso_C_2);
+    appendTable(LogGaussAniso_C_3);
+    appendTable(LogGaussAniso_C_4_5);
+    appendTable(LogGaussAniso_C_6_8);
+    appendTable(LogGaussAniso_C_9_14);
+    appendTable(LogGaussAniso_C_15p);
+    appendTable(LogGaussAniso_D_1);
+    appendTable(LogGaussAniso_D_2);
+    appendTable(LogGaussAniso_D_3);
+    appendTable(LogGaussAniso_D_4_5);
+    appendTable(LogGaussAniso_D_6_8);
+    appendTable(LogGaussAniso_D_9_14);
+    appendTable(LogGaussAniso_D_15p);
+    appendTable(LogGaussAniso_P_1);
+    appendTable(LogGaussAniso_P_2);
+    appendTable(LogGaussAniso_P_3);
+    appendTable(LogGaussAniso_P_4_5);
+    appendTable(LogGaussAniso_P_6_8);
+    appendTable(LogGaussAniso_P_9_14);
+    appendTable(LogGaussAniso_P_15p);
+    appendTable(LogGaussAniso_X_1);
+    appendTable(LogGaussAniso_X_2);
+    appendTable(LogGaussAniso_X_3);
+    appendTable(LogGaussAniso_X_4_5);
+    appendTable(LogGaussAniso_X_6_8);
+    appendTable(LogGaussAniso_X_9_14);
+    appendTable(LogGaussAniso_X_15p);
+
+    // Create storage buffer for packed tables
+    uint64_t allBytes = (uint64_t)allData.size() * sizeof(float);
+    wgpu::BufferDescriptor tableDesc{};
+    tableDesc.label = wgpu::StringView("Higher Order Table Buffer");
+    tableDesc.size = allBytes;
+    tableDesc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::Storage;
+    m_higherOrderTableBuffer = m_device.CreateBuffer(&tableDesc);
+    if (allData.size() > 0) {
+        m_queue.WriteBuffer(m_higherOrderTableBuffer, 0, allData.data(),
+                            (uint32_t)allBytes);
+    }
+
     m_queue.WriteBuffer(m_uniformBuffer, 0, &m_cameraData,
                         sizeof(m_cameraData));
     m_queue.WriteBuffer(m_worldBuffer, 0, &world, sizeof(world));
-    m_queue.WriteBuffer(m_settingsBuffer, 0, &raySettings, sizeof(raySettings));
+    m_queue.WriteBuffer(m_settingsBuffer, 0, &m_raySettingsData,
+                        sizeof(m_raySettingsData));
     m_queue.WriteBuffer(m_frameCountBuffer, 0, &frameData, sizeof(frameData));
 }
 
 void Application::initBindGroup() {
-    std::vector<wgpu::BindGroupEntry> entries(7);  // ← 5 → 7
+    std::vector<wgpu::BindGroupEntry> entries(10);
 
     entries[0].binding = 0;
     entries[0].buffer = m_uniformBuffer;
@@ -107,6 +296,19 @@ void Application::initBindGroup() {
     entries[6].offset = 0;
     entries[6].size = sizeof(CloudMesh);
 
+    entries[7].binding = 7;
+    entries[7].buffer = m_higherOrderTableBuffer;
+    entries[7].offset = 0;
+    entries[7].size = wgpu::kWholeSize;
+
+    entries[8].binding = 8;
+    entries[8].buffer = m_sdfBuffer;
+    entries[8].offset = 0;
+    entries[8].size = wgpu::kWholeSize;
+
+    entries[9].binding = 9;
+    entries[9].sampler = m_texSampler;
+
     wgpu::BindGroupDescriptor bindGroupDesc;
     bindGroupDesc.layout = m_bindGroupLayout;
     bindGroupDesc.entryCount = (uint32_t)entries.size();
@@ -115,7 +317,7 @@ void Application::initBindGroup() {
 }
 
 void Application::initBindGroupLayout() {
-    std::vector<wgpu::BindGroupLayoutEntry> bindings(7);  // ← 5 → 7
+    std::vector<wgpu::BindGroupLayoutEntry> bindings(10);
 
     bindings[0].binding = 0;
     bindings[0].buffer.type = wgpu::BufferBindingType::Uniform;
@@ -152,6 +354,20 @@ void Application::initBindGroupLayout() {
     bindings[6].buffer.type = wgpu::BufferBindingType::Uniform;
     bindings[6].buffer.minBindingSize = sizeof(CloudMesh);
     bindings[6].visibility = wgpu::ShaderStage::Compute;
+
+    bindings[7].binding = 7;
+    bindings[7].buffer.type = wgpu::BufferBindingType::ReadOnlyStorage;
+    bindings[7].buffer.minBindingSize = 0;
+    bindings[7].visibility = wgpu::ShaderStage::Compute;
+
+    bindings[8].binding = 8;
+    bindings[8].buffer.type = wgpu::BufferBindingType::ReadOnlyStorage;
+    bindings[8].buffer.minBindingSize = 0;
+    bindings[8].visibility = wgpu::ShaderStage::Compute;
+
+    bindings[9].binding = 9;
+    bindings[9].sampler.type = wgpu::SamplerBindingType::Filtering;
+    bindings[9].visibility = wgpu::ShaderStage::Compute;
 
     wgpu::BindGroupLayoutDescriptor bindGroupLayoutDesc;
     bindGroupLayoutDesc.entryCount = (uint32_t)bindings.size();
@@ -233,19 +449,15 @@ void Application::HandleMouseCallback(double xpos, double ypos) {
     m_lastMouseY = ypos;
 }
 
-
 void Application::loadCloudMesh() {
     tinyobj::attrib_t attrib;
     std::vector<tinyobj::shape_t> shapes;
     std::vector<tinyobj::material_t> materials;
     std::string err;
 
-    bool ok = tinyobj::LoadObj(
-        &attrib, &shapes, &materials, &err,
-        "resources/testobj.obj",
-        nullptr,
-        true
-        );
+    bool ok =
+        tinyobj::LoadObj(&attrib, &shapes, &materials, &err,
+                         "resources/better_test_cloud.obj", nullptr, true);
 
     if (!ok) {
         std::cerr << "OBJ load failed: " << err << std::endl;
@@ -259,15 +471,20 @@ void Application::loadCloudMesh() {
     const float scale = 0.6f;
 
     std::vector<GPUTriangle> tris;
-    glm::vec3 boundsMin( std::numeric_limits<float>::max());
+    glm::vec3 boundsMin(std::numeric_limits<float>::max());
     glm::vec3 boundsMax(-std::numeric_limits<float>::max());
 
     auto getVertex = [&](int idx) {
-        return glm::vec3(
-                   attrib.vertices[3 * idx + 0],
-                   attrib.vertices[3 * idx + 1],
-                   attrib.vertices[3 * idx + 2]
-                   ) * scale + translate;
+        return glm::vec3(attrib.vertices[3 * idx + 0],
+                         attrib.vertices[3 * idx + 1],
+                         attrib.vertices[3 * idx + 2]) *
+                   scale +
+               translate;
+    };
+    auto getNormal = [&](int idx) {
+        return glm::vec3(attrib.normals[3 * idx + 0],
+                         attrib.normals[3 * idx + 1],
+                         attrib.normals[3 * idx + 2]);
     };
 
     for (const auto& shape : shapes) {
@@ -275,16 +492,23 @@ void Application::loadCloudMesh() {
         size_t off = 0;
         for (size_t f = 0; f < mesh.num_face_vertices.size(); f++) {
             int fv = mesh.num_face_vertices[f];
-            if (fv != 3) { off += fv; continue; }
+            if (fv != 3) {
+                off += fv;
+                continue;
+            }
 
             GPUTriangle t{};
             t.v0 = getVertex(mesh.indices[off + 0].vertex_index);
             t.v1 = getVertex(mesh.indices[off + 1].vertex_index);
             t.v2 = getVertex(mesh.indices[off + 2].vertex_index);
-            t.normal = glm::normalize(glm::cross(t.v1 - t.v0, t.v2 - t.v0));
+            t.n0 = getNormal(mesh.indices[off + 0].normal_index);
+            t.n1 = getNormal(mesh.indices[off + 1].normal_index);
+            t.n2 = getNormal(mesh.indices[off + 2].normal_index);
 
-            boundsMin = glm::min(boundsMin, glm::min(t.v0, glm::min(t.v1, t.v2)));
-            boundsMax = glm::max(boundsMax, glm::max(t.v0, glm::max(t.v1, t.v2)));
+            boundsMin =
+                glm::min(boundsMin, glm::min(t.v0, glm::min(t.v1, t.v2)));
+            boundsMax =
+                glm::max(boundsMax, glm::max(t.v0, glm::max(t.v1, t.v2)));
 
             tris.push_back(t);
             off += 3;
@@ -292,11 +516,12 @@ void Application::loadCloudMesh() {
     }
 
     m_triangleCount = static_cast<uint32_t>(tris.size());
-    std::cout << "Loaded mesh: " << m_triangleCount << " triangles" << std::endl;
+    std::cout << "Loaded mesh: " << m_triangleCount << " triangles"
+              << std::endl;
 
     wgpu::BufferDescriptor triDesc{};
     triDesc.label = "Triangle Buffer";
-    triDesc.size  = tris.size() * sizeof(GPUTriangle);
+    triDesc.size = tris.size() * sizeof(GPUTriangle);
     triDesc.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
     m_triangleBuffer = m_device.CreateBuffer(&triDesc);
     m_queue.WriteBuffer(m_triangleBuffer, 0, tris.data(), triDesc.size);
@@ -304,14 +529,33 @@ void Application::loadCloudMesh() {
     CloudMesh meta{};
     meta.boundsMin = boundsMin;
     meta.boundsMax = boundsMax;
-    meta.triangleOffset  = 0;
+    meta.triangleOffset = 0;
     meta.triangleCount = m_triangleCount;
-    meta.shellThickness  = 0.3f;
+    // meta.shellThickness = 0.3f;
+    meta.shellThickness = 0.42f;
 
     wgpu::BufferDescriptor metaDesc{};
     metaDesc.label = "Cloud Mesh Buffer";
-    metaDesc.size  = sizeof(CloudMesh);
+    metaDesc.size = sizeof(CloudMesh);
     metaDesc.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
     m_cloudMeshBuffer = m_device.CreateBuffer(&metaDesc);
     m_queue.WriteBuffer(m_cloudMeshBuffer, 0, &meta, sizeof(meta));
+
+    // Generate SDF Texture
+    glm::uvec3 sdfRes(128, 128, 128);
+    // Expand bounds slightly to give room outside the mesh
+    glm::vec3 sdfBoundsMin = boundsMin - glm::vec3(meta.shellThickness * 1.5f);
+    glm::vec3 sdfBoundsMax = boundsMax + glm::vec3(meta.shellThickness * 1.5f);
+    std::vector<float> sdfData =
+        SDFHandler::generateSDF(tris, sdfBoundsMin, sdfBoundsMax, sdfRes);
+
+    wgpu::BufferDescriptor sdfDesc{};
+    sdfDesc.label = "SDF Buffer";
+    sdfDesc.size = sdfData.size() * sizeof(float);
+    sdfDesc.usage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
+    m_sdfBuffer = m_device.CreateBuffer(&sdfDesc);
+    m_queue.WriteBuffer(m_sdfBuffer, 0, sdfData.data(), sdfDesc.size);
+    std::cout << "Generated SDF: " << sdfData.size()
+              << " floats for resolution " << sdfRes.x << "x" << sdfRes.y << "x"
+              << sdfRes.z << std::endl;
 }

@@ -104,6 +104,7 @@ class Application {
     wgpu::TextureView m_outputTextureView = nullptr;
     uint32_t m_textureWidth = 0;
     uint32_t m_textureHeight = 0;
+    float m_renderScale = 1.0f;
 
     uint32_t m_frameCount = 0;
 
@@ -113,6 +114,7 @@ class Application {
     double m_lastMouseY = 0.0;
     bool m_keys[GLFW_KEY_LAST + 1] = {};  // GLFW key state tracking
     CameraData m_cameraData;
+    RaySettingsData m_raySettingsData{};
     float m_moveSpeed = 1.0f;
     float m_rotateSpeed = 0.002f;
     double m_lastFrameTime = 0.0;
@@ -123,8 +125,14 @@ class Application {
     void toggleMouseCapture();
 
     wgpu::Buffer m_triangleBuffer;
-    uint32_t   m_triangleCount = 0;
+    uint32_t m_triangleCount = 0;
     wgpu::Buffer m_cloudMeshBuffer;
+    wgpu::Buffer m_higherOrderTableBuffer;
+    wgpu::Texture m_higherOrderTexture;
+    wgpu::TextureView m_higherOrderTextureView;
+    wgpu::Sampler m_texSampler;
+
+    wgpu::Buffer m_sdfBuffer;
+
     void loadCloudMesh();
 };
-

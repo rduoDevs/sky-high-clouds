@@ -1,7 +1,6 @@
 #pragma once
 #include <glm/glm.hpp>
 
-
 // Tris/cloud
 struct GPUTriangle {
     glm::vec3 v0;
@@ -10,8 +9,12 @@ struct GPUTriangle {
     float pad1;
     glm::vec3 v2;
     float pad2;
-    glm::vec3 normal;
+    glm::vec3 n0;
     float pad3;
+    glm::vec3 n1;
+    float pad4;
+    glm::vec3 n2;
+    float pad5;
 };
 
 struct CloudMesh {
@@ -50,7 +53,10 @@ struct WorldData {
 struct RaySettingsData {
     uint32_t maxBounces;
     uint32_t antiAliasingSamples;
-    uint32_t _pad[2];
+    uint32_t scatteringOrderMask;
+    uint32_t _pad;
+    float scale;
+    uint32_t _pad2[3];
 };
 
 struct FrameCountData {

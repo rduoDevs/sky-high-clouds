@@ -109,10 +109,13 @@ add_executable(${PROJECT_NAME}
 	src/ResourceManager.cpp
     src/gpuData.h
     src/Application_gpuData.cpp
+    src/sdfhandler.h
+    src/sdfhandler.cpp
 
     resources/ray.wgsl
     resources/present.wgsl
     src/tiny_obj_loader.h
+    src/Bouthors_Texture_Definitions.h
 
 )
 
