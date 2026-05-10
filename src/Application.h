@@ -91,11 +91,8 @@ class Application {
     wgpu::BindGroup m_presentBindGroup = nullptr;
     wgpu::RenderPipeline m_presentPipeline = nullptr;
     wgpu::Sampler m_presentSampler = nullptr;
-    // std::unique_ptr<wgpu::ErrorCallback> m_uncapturedErrorCallback;
-    // std::unique_ptr<wgpu::DeviceLostCallback> m_deviceLostCallback;
 
     wgpu::Buffer m_uniformBuffer = nullptr;
-    wgpu::Buffer m_worldBuffer = nullptr;
     wgpu::Buffer m_settingsBuffer = nullptr;
     wgpu::Buffer m_frameCountBuffer = nullptr;
     wgpu::Texture m_inputTexture = nullptr;
@@ -130,7 +127,6 @@ class Application {
     wgpu::Buffer m_higherOrderTableBuffer;
     wgpu::Texture m_higherOrderTexture;
     wgpu::TextureView m_higherOrderTextureView;
-    wgpu::Sampler m_texSampler;
 
     wgpu::Buffer m_sdfBuffer;
 

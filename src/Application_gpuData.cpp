@@ -2,9 +2,7 @@
 #include "Application.h"
 #include "gpuData.h"
 #define TINYOBJLOADER_IMPLEMENTATION
-#include <fstream>
-#include <string>
-#include <vector>
+#include <math.h>
 #include "Bouthors_Texture_Definitions.h"
 #include "sdfhandler.h"
 #include "tiny_obj_loader.h"
@@ -17,11 +15,6 @@ void Application::initBuffers() {
     desc.size = sizeof(CameraData);
     desc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::Uniform;
     m_uniformBuffer = m_device.CreateBuffer(&desc);
-
-    desc.label = wgpu::StringView("World Storage");
-    desc.size = sizeof(WorldData);
-    desc.usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::Storage;
-    m_worldBuffer = m_device.CreateBuffer(&desc);
 
     desc.label = wgpu::StringView("Ray Settings Uniform");
     desc.size = sizeof(RaySettingsData);
@@ -39,26 +32,6 @@ void Application::initBuffers() {
         .rotation = glm::vec3(0.0f, 0.0f, 0.0f),
         .fov = 60.0f,
     };
-
-    WorldData world{};
-
-    // world.spheres[0].centerRadius = glm::vec4(-0.8f, 0.0f, -1.2f, 0.65f);
-    // world.spheres[0].material.colorSmoothness =
-    //     glm::vec4(0.95f, 0.2f, 0.2f, 0.0f);
-    // world.spheres[0].material.specularEmissionPad =
-    //     glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
-    // world.spheres[0].material.emissionColorRefractive =
-    //     glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
-
-    // world.spheres[1].centerRadius = glm::vec4(1.9f, 0.1f, -2.0f, 0.75f);
-    // world.spheres[1].material.colorSmoothness =
-    //     glm::vec4(0.2f, 0.45f, 0.95f, 0.0f);
-    // world.spheres[1].material.specularEmissionPad =
-    //     glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-    // world.spheres[1].material.emissionColorRefractive =
-    //     glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
-    // world.spheres[2].centerRadius = glm::vec4(0.5f, 0.2f, -1.0f, 0.5f);
 
     m_raySettingsData = {
         .maxBounces = 2,
@@ -78,108 +51,6 @@ void Application::initBuffers() {
     samplerDesc.addressModeV = wgpu::AddressMode::ClampToEdge;
     samplerDesc.magFilter = wgpu::FilterMode::Linear;
     samplerDesc.minFilter = wgpu::FilterMode::Linear;
-
-    this->m_texSampler = m_device.CreateSampler(&samplerDesc);
-
-    // Load higher-order tables from raw text files and pack into a single float
-    // array
-    // const uint32_t TAB_W = 64u;
-    // const uint32_t TAB_H = 64u;
-    // const uint32_t TAB_LAYERS = 49u;  // 7 orders * 7 sections
-
-    // std::vector<std::string> tableFiles = {
-    //     "multiple_scattering_textures/tables/LogGaussAniso_A_1.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_A_2.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_A_3.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_A_4-5.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_A_6-8.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_A_9-14.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_A_15p.txt",
-
-    //     "multiple_scattering_textures/tables/LogGaussAniso_B1_1.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_B1_2.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_B1_3.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_B1_4-5.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_B1_6-8.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_B1_9-14.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_B1_15p.txt",
-
-    //     "multiple_scattering_textures/tables/LogGaussAniso_B2_1.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_B2_2.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_B2_3.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_B2_4-5.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_B2_6-8.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_B2_9-14.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_B2_15p.txt",
-
-    //     "multiple_scattering_textures/tables/LogGaussAniso_C_1.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_C_2.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_C_3.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_C_4-5.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_C_6-8.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_C_9-14.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_C_15p.txt",
-
-    //     "multiple_scattering_textures/tables/LogGaussAniso_D_1.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_D_2.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_D_3.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_D_4-5.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_D_6-8.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_D_9-14.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_D_15p.txt",
-
-    //     "multiple_scattering_textures/tables/LogGaussAniso_P_1.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_P_2.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_P_3.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_P_4-5.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_P_6-8.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_P_9-14.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_P_15p.txt",
-
-    //     "multiple_scattering_textures/tables/LogGaussAniso_X_1.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_X_2.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_X_3.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_X_4-5.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_X_6-8.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_X_9-14.txt",
-    //     "multiple_scattering_textures/tables/LogGaussAniso_X_15p.txt",
-    // };
-
-    // std::vector<float> allData;
-    // allData.reserve(TAB_W * TAB_H * TAB_LAYERS);
-
-    // for (size_t fi = 0; fi < tableFiles.size(); ++fi) {
-    //     const std::string path = std::string("./resources/") +
-    //     tableFiles[fi]; std::ifstream ifs(path); if (!ifs) {
-    //         std::cerr << "ERROR: Failed to open table file: " << path
-    //                   << std::endl;
-    //         // pad with zeros for this layer
-    //         for (uint32_t i = 0; i < TAB_W * TAB_H; ++i)
-    //             allData.push_back(0.0f);
-    //         continue;
-    //     }
-    //     // std::cout << "Loaded table: " << path << std::endl;
-    //     // parse whitespace separated floats
-    //     std::vector<float> layer;
-    //     layer.reserve(TAB_W * TAB_H);
-    //     float v;
-    //     while (ifs >> v) {
-    //         layer.push_back(v);
-    //     }
-    //     if (layer.size() != TAB_W * TAB_H) {
-    //         std::cerr << "Warning: table file " << path << " contains "
-    //                   << layer.size() << " floats (expected " << (TAB_W *
-    //                   TAB_H)
-    //                   << ")." << std::endl;
-    //         // pad or trim
-    //         layer.resize(TAB_W * TAB_H, 0.0f);
-    //     }
-    //     allData.insert(allData.end(), layer.begin(), layer.end());
-    // }
-
-    // std::cout << "Total table data loaded: " << allData.size()
-    //           << " floats (expected " << (TAB_W * TAB_H * TAB_LAYERS) << ")"
-    //           << std::endl;
 
     std::vector<float> allData;
     allData.reserve(64 * 64 * 49);  // 7 orders * 7 sections * 64*64 floats each
@@ -254,14 +125,13 @@ void Application::initBuffers() {
 
     m_queue.WriteBuffer(m_uniformBuffer, 0, &m_cameraData,
                         sizeof(m_cameraData));
-    m_queue.WriteBuffer(m_worldBuffer, 0, &world, sizeof(world));
     m_queue.WriteBuffer(m_settingsBuffer, 0, &m_raySettingsData,
                         sizeof(m_raySettingsData));
     m_queue.WriteBuffer(m_frameCountBuffer, 0, &frameData, sizeof(frameData));
 }
 
 void Application::initBindGroup() {
-    std::vector<wgpu::BindGroupEntry> entries(10);
+    std::vector<wgpu::BindGroupEntry> entries(8);
 
     entries[0].binding = 0;
     entries[0].buffer = m_uniformBuffer;
@@ -269,45 +139,37 @@ void Application::initBindGroup() {
     entries[0].size = sizeof(CameraData);
 
     entries[1].binding = 1;
-    entries[1].buffer = m_worldBuffer;
-    entries[1].offset = 0;
-    entries[1].size = sizeof(WorldData);
+    entries[1].textureView = m_outputTextureView;
 
     entries[2].binding = 2;
-    entries[2].textureView = m_outputTextureView;
+    entries[2].buffer = m_settingsBuffer;
+    entries[2].offset = 0;
+    entries[2].size = sizeof(RaySettingsData);
 
     entries[3].binding = 3;
-    entries[3].buffer = m_settingsBuffer;
+    entries[3].buffer = m_frameCountBuffer;
     entries[3].offset = 0;
-    entries[3].size = sizeof(RaySettingsData);
+    entries[3].size = sizeof(FrameCountData);
 
     entries[4].binding = 4;
-    entries[4].buffer = m_frameCountBuffer;
+    entries[4].buffer = m_triangleBuffer;
     entries[4].offset = 0;
-    entries[4].size = sizeof(FrameCountData);
+    entries[4].size = m_triangleCount * sizeof(GPUTriangle);
 
     entries[5].binding = 5;
-    entries[5].buffer = m_triangleBuffer;
+    entries[5].buffer = m_cloudMeshBuffer;
     entries[5].offset = 0;
-    entries[5].size = m_triangleCount * sizeof(GPUTriangle);
+    entries[5].size = sizeof(CloudMesh);
 
     entries[6].binding = 6;
-    entries[6].buffer = m_cloudMeshBuffer;
+    entries[6].buffer = m_higherOrderTableBuffer;
     entries[6].offset = 0;
-    entries[6].size = sizeof(CloudMesh);
+    entries[6].size = wgpu::kWholeSize;
 
     entries[7].binding = 7;
-    entries[7].buffer = m_higherOrderTableBuffer;
+    entries[7].buffer = m_sdfBuffer;
     entries[7].offset = 0;
     entries[7].size = wgpu::kWholeSize;
-
-    entries[8].binding = 8;
-    entries[8].buffer = m_sdfBuffer;
-    entries[8].offset = 0;
-    entries[8].size = wgpu::kWholeSize;
-
-    entries[9].binding = 9;
-    entries[9].sampler = m_texSampler;
 
     wgpu::BindGroupDescriptor bindGroupDesc;
     bindGroupDesc.layout = m_bindGroupLayout;
@@ -317,7 +179,7 @@ void Application::initBindGroup() {
 }
 
 void Application::initBindGroupLayout() {
-    std::vector<wgpu::BindGroupLayoutEntry> bindings(10);
+    std::vector<wgpu::BindGroupLayoutEntry> bindings(8);
 
     bindings[0].binding = 0;
     bindings[0].buffer.type = wgpu::BufferBindingType::Uniform;
@@ -325,49 +187,40 @@ void Application::initBindGroupLayout() {
     bindings[0].visibility = wgpu::ShaderStage::Compute;
 
     bindings[1].binding = 1;
-    bindings[1].buffer.type = wgpu::BufferBindingType::ReadOnlyStorage;
-    bindings[1].buffer.minBindingSize = sizeof(WorldData);
+    bindings[1].storageTexture.access = wgpu::StorageTextureAccess::WriteOnly;
+    bindings[1].storageTexture.format = wgpu::TextureFormat::RGBA8Unorm;
+    bindings[1].storageTexture.viewDimension = wgpu::TextureViewDimension::e2D;
     bindings[1].visibility = wgpu::ShaderStage::Compute;
 
     bindings[2].binding = 2;
-    bindings[2].storageTexture.access = wgpu::StorageTextureAccess::WriteOnly;
-    bindings[2].storageTexture.format = wgpu::TextureFormat::RGBA8Unorm;
-    bindings[2].storageTexture.viewDimension = wgpu::TextureViewDimension::e2D;
+    bindings[2].buffer.type = wgpu::BufferBindingType::Uniform;
+    bindings[2].buffer.minBindingSize = sizeof(RaySettingsData);
     bindings[2].visibility = wgpu::ShaderStage::Compute;
 
     bindings[3].binding = 3;
     bindings[3].buffer.type = wgpu::BufferBindingType::Uniform;
-    bindings[3].buffer.minBindingSize = sizeof(RaySettingsData);
+    bindings[3].buffer.minBindingSize = sizeof(FrameCountData);
     bindings[3].visibility = wgpu::ShaderStage::Compute;
 
     bindings[4].binding = 4;
-    bindings[4].buffer.type = wgpu::BufferBindingType::Uniform;
-    bindings[4].buffer.minBindingSize = sizeof(FrameCountData);
+    bindings[4].buffer.type = wgpu::BufferBindingType::ReadOnlyStorage;
+    bindings[4].buffer.minBindingSize = sizeof(GPUTriangle);
     bindings[4].visibility = wgpu::ShaderStage::Compute;
 
     bindings[5].binding = 5;
-    bindings[5].buffer.type = wgpu::BufferBindingType::ReadOnlyStorage;
-    bindings[5].buffer.minBindingSize = sizeof(GPUTriangle);
+    bindings[5].buffer.type = wgpu::BufferBindingType::Uniform;
+    bindings[5].buffer.minBindingSize = sizeof(CloudMesh);
     bindings[5].visibility = wgpu::ShaderStage::Compute;
 
     bindings[6].binding = 6;
-    bindings[6].buffer.type = wgpu::BufferBindingType::Uniform;
-    bindings[6].buffer.minBindingSize = sizeof(CloudMesh);
+    bindings[6].buffer.type = wgpu::BufferBindingType::ReadOnlyStorage;
+    bindings[6].buffer.minBindingSize = 0;
     bindings[6].visibility = wgpu::ShaderStage::Compute;
 
     bindings[7].binding = 7;
     bindings[7].buffer.type = wgpu::BufferBindingType::ReadOnlyStorage;
     bindings[7].buffer.minBindingSize = 0;
     bindings[7].visibility = wgpu::ShaderStage::Compute;
-
-    bindings[8].binding = 8;
-    bindings[8].buffer.type = wgpu::BufferBindingType::ReadOnlyStorage;
-    bindings[8].buffer.minBindingSize = 0;
-    bindings[8].visibility = wgpu::ShaderStage::Compute;
-
-    bindings[9].binding = 9;
-    bindings[9].sampler.type = wgpu::SamplerBindingType::Filtering;
-    bindings[9].visibility = wgpu::ShaderStage::Compute;
 
     wgpu::BindGroupLayoutDescriptor bindGroupLayoutDesc;
     bindGroupLayoutDesc.entryCount = (uint32_t)bindings.size();
@@ -395,11 +248,11 @@ void Application::handleKeyInput(float deltaTime) {
     if (glm::length(movement) > 0.0f) {
         movement = glm::normalize(movement);
 
-        // Create rotation matrix from camera rotation
+        // rotation
         float cosY = glm::cos(m_cameraData.rotation.y);
         float sinY = glm::sin(m_cameraData.rotation.y);
 
-        // Transform movement based on camera rotation (yaw only for now)
+        // transform movement
         float movedX = movement.x * cosY - movement.z * sinY;
         float movedZ = movement.x * sinY + movement.z * cosY;
 
@@ -427,7 +280,7 @@ void Application::HandleKeyCallback(int key, int action) {
     if (key >= 0 && key <= GLFW_KEY_LAST) {
         m_keys[key] = (action != GLFW_RELEASE);
 
-        // Handle Escape key for mouse capture toggle
+        // escape to toggle mouse capture
         if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
             toggleMouseCapture();
         }
@@ -443,6 +296,9 @@ void Application::HandleMouseCallback(double xpos, double ypos) {
         // y is yaw (looking left/right), x is pitch (looking up/down)
         m_cameraData.rotation.y += static_cast<float>(deltaX) * m_rotateSpeed;
         m_cameraData.rotation.x -= static_cast<float>(deltaY) * m_rotateSpeed;
+        m_cameraData.rotation.x =
+            std::min(std::max(m_cameraData.rotation.x, -(float)M_PI_2 + 0.01f),
+                     (float)M_PI_2 - 0.01f);
         m_cameraDataUpdated = true;
     }
     m_lastMouseX = xpos;
@@ -455,9 +311,9 @@ void Application::loadCloudMesh() {
     std::vector<tinyobj::material_t> materials;
     std::string err;
 
-    bool ok =
-        tinyobj::LoadObj(&attrib, &shapes, &materials, &err,
-                         "resources/better_test_cloud.obj", nullptr, true);
+    bool ok = tinyobj::LoadObj(&attrib, &shapes, &materials, &err,
+                               "resources/meshes/better_test_cloud.obj",
+                               nullptr, true);
 
     if (!ok) {
         std::cerr << "OBJ load failed: " << err << std::endl;

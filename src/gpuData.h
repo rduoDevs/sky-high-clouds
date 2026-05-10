@@ -41,15 +41,6 @@ struct MaterialData {
     glm::vec4 emissionColorRefractive;
 };
 
-struct SphereData {
-    glm::vec4 centerRadius;
-    MaterialData material;
-};
-
-struct WorldData {
-    SphereData spheres[2];
-};
-
 struct RaySettingsData {
     uint32_t maxBounces;
     uint32_t antiAliasingSamples;

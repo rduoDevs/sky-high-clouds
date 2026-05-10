@@ -72,7 +72,6 @@ std::vector<float> SDFHandler::generateSDF(
                 glm::vec3 p = boundsMin + glm::vec3(x, y, z) * cellSize;
                 float minDist = 1e6f;
                 bool isInside = false;
-                // Brute force distance
                 for (const auto& tri : triangles) {
                     glm::vec3 closest =
                         closestPointOnTriangle(p, tri.v0, tri.v1, tri.v2);

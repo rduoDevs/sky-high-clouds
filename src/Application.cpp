@@ -500,24 +500,6 @@ void Application::onFrame() {
         return;
     }
 
-    // wgpu::TextureView nextTexture =
-    //     wgpu::Texture(surfaceTexture.texture).CreateView();
-
-    // WGPURenderPassColorAttachment renderPassColorAttachment{};
-    // renderPassColorAttachment.view = nextTexture.Get();
-    // renderPassColorAttachment.resolveTarget = nullptr;
-    // renderPassColorAttachment.loadOp = WGPULoadOp_Clear;
-    // renderPassColorAttachment.storeOp = WGPUStoreOp_Store;
-    // renderPassColorAttachment.clearValue = WGPUColor{0.0, 0.0, 0.0, 1.0};
-
-    // WGPURenderPassDescriptor renderPassDesc{};
-    // renderPassDesc.colorAttachmentCount = 1;
-    // renderPassDesc.colorAttachments = &renderPassColorAttachment;
-
-    // wgpu::CommandEncoder encoder = m_device.CreateCommandEncoder();
-    // wgpu::RenderPassEncoder renderPass = wgpu::RenderPassEncoder(
-    //     wgpuCommandEncoderBeginRenderPass(encoder.Get(), &renderPassDesc));
-
     wgpu::TextureView nextTexture =
         wgpu::Texture(surfaceTexture.texture).CreateView();
 

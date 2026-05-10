@@ -107,15 +107,13 @@ struct CollectorResult {
 //binds
 
 @group(0) @binding(0) var<uniform>       camera            : Camera;
-@group(0) @binding(1) var<storage, read> world             : World;
-@group(0) @binding(2) var                outputTex         : texture_storage_2d<rgba8unorm, write>;
-@group(0) @binding(3) var<uniform>       settings          : Settings;
-@group(0) @binding(4) var<uniform>       frameData         : FrameUniform;
-@group(0) @binding(5) var<storage, read> triangles         : array<Triangle>;
-@group(0) @binding(6) var<uniform>       cloudMesh         : CloudMesh;
-@group(0) @binding(7) var<storage, read> higherOrderTables : array<f32>;
-@group(0) @binding(8) var<storage, read> sdfBuffer         : array<f32>;
-// binding 9 was sdfSampler, ignore it
+@group(0) @binding(1) var                outputTex         : texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(2) var<uniform>       settings          : Settings;
+@group(0) @binding(3) var<uniform>       frameData         : FrameUniform;
+@group(0) @binding(4) var<storage, read> triangles         : array<Triangle>;
+@group(0) @binding(5) var<uniform>       cloudMesh         : CloudMesh;
+@group(0) @binding(6) var<storage, read> higherOrderTables : array<f32>;
+@group(0) @binding(7) var<storage, read> sdfBuffer         : array<f32>;
 
 //const
 
@@ -136,14 +134,12 @@ const SUN_INTENSITY = 3.0f;
 const SKY_COLOR_TOP = vec3<f32>(0.35, 0.55, 0.95);
 const SKY_COLOR_BOT = vec3<f32>(0.2, 0.1, 0.0);
 
-// SCALE is now a uniform field: `settings.scale` set from the GUI
-
 const HO_W           : u32 = 64u;
 const HO_H           : u32 = 64u;
 const HO_LAYER_COUNT : u32 = 49u;
 const HO_ORDER_COUNT : u32 = 7u;
 
-// Domain bounds from LogGaussAniso_Params_*.txt, ordered as: 1, 2, 3, 4-5, 6-8, 9-14, 15+
+// domain bounds from LogGaussAniso_Params_*.txt ordered as: 1, 2, 3, 4-5, 6-8, 9-14, 15+
 const T_MIN_BY_ORDER = array<f32, 7>(50.0, 50.0, 50.0, 10.0, 10.0,   50.0,   50.0);
 const T_MAX_BY_ORDER = array<f32, 7>(500.0, 500.0, 500.0, 500.0, 500.0, 1000.0, 5000.0);
 const MU_V_MIN     : f32 = -1.0;
@@ -422,8 +418,7 @@ fn distToCloudSurface(p: vec3<f32>) -> f32 {
     let padding = cloudMesh.shellThickness * 1.5;
     let sdfBoundsMin = cloudMesh.boundsMin - vec3<f32>(padding);
     let sdfBoundsMax = cloudMesh.boundsMax + vec3<f32>(padding);
-    
-    // UVW coordinates
+
     let uvw = (p - sdfBoundsMin) / max(sdfBoundsMax - sdfBoundsMin, vec3<f32>(0.001));
     
     if (any(uvw < vec3<f32>(0.0)) || any(uvw > vec3<f32>(1.0))) {
@@ -431,6 +426,7 @@ fn distToCloudSurface(p: vec3<f32>) -> f32 {
     }
     
     let gridRes = vec3<f32>(128.0, 128.0, 128.0);
+
     // bilinear interpolation
     let sdfPos = uvw * gridRes - 0.5;
     let i0_i = vec3<i32>(floor(sdfPos));
@@ -475,150 +471,26 @@ fn getTime() -> f32 {
     return f32(frameData.frameCount) * 0.016667;
 }
 
-// fn cloudDensity(p: vec3<f32>) -> f32 {
-//     let time = getTime();
-
-//     // Drift vectors — slightly different speeds per axis avoids directional
-//     // streaking. The shell uses a faster drift so wisps morph quickly;
-//     // the macro field uses a slower drift so the bulk shape evolves gently.
-//     let driftFast = vec3<f32>(time * 0.08, time * 0.02, time * 0.05);
-//     let driftSlow = vec3<f32>(time * 0.03, time * 0.015, time * 0.02);
-
-//     // Spatio-temporal density modulator: a low-frequency 3D noise field that
-//     // breathes through the cloud volume, creating dissipation pockets that
-//     // cut diagonally through the cloud rather than tracking the AABB. This
-//     // is what keeps the box silhouette hidden when density drops locally.
-//     let m        = perlin3D(p * 0.15 + driftSlow);
-//     let densityField = clamp(0.6 + m * 1.6, 0.0, 1.4);
-
-//     // Gentle whole-cloud breathing — a global rhythm on top of everything
-//     let breathe = 0.85 + 0.15 * sin(time * 0.30);
-
-//     let D = distToCloudSurface(p);
-//     let h = cloudMesh.shellThickness;
-
-//     var rho = 0.0f;
-//     if (D < 0.0) {
-//         rho = 0.0;
-//     } else if (D < h) {
-//         // Shell wisps advect through the FBM field — edges constantly evolve
-//         let noiseScale = 4.0 / max(h, 0.01);
-//         let n          = fbm(p * noiseScale + driftFast) * 2.0 - 1.0;
-//         rho = sigmoid(D / h * 3.0 + n * 2.0);
-//     } else {
-//         rho = 1.0;
-//     }
-
-//     rho *= densityField * breathe;
-//     return clamp(rho, 0.0, 1.0);
-// }
-
-
-fn worley3D(p: vec3<f32>) -> f32 {
-    let pi = floor(p);
-    let pf = fract(p);
-
-    var minDist = 1.0;
-
-    for (var x = -1; x <= 1; x++) {
-        for (var y = -1; y <= 1; y++) {
-            for (var z = -1; z <= 1; z++) {
-                let neighbor = vec3<f32>(f32(x), f32(y), f32(z));
-                let cellPos = pi + neighbor;
-                let randomPoint = hash3(cellPos);
-
-                let diff = neighbor + randomPoint - pf;
-                let dist = length(diff);
-
-                minDist = min(minDist, dist);
-            }
-        }
-    }
-
-    return clamp(minDist, 0.0, 1.0);
-}
-
-fn worleyFbm(p: vec3<f32>) -> f32 {
-    var value = 0.0;
-    var amplitude = 0.5;
-    var frequency = 1.0;
-    var norm = 0.0;
-
-    for (var i = 0; i < 3; i++) {
-        value += amplitude * worley3D(p * frequency);
-        norm += amplitude;
-
-        frequency *= 2.0;
-        amplitude *= 0.5;
-    }
-
-    return clamp(value / max(norm, 1e-5), 0.0, 1.0);
-}
-
 fn cloudDensity(p: vec3<f32>) -> f32 {
     let D    = distToCloudSurface(p);
-    let time = getTime();
-    // Only apply noise in the shell layer of thickness h
     let h    = cloudMesh.shellThickness;
+
     var rho  = 0.0f;
     if (D < 0.0) {
-        // Outside cloud
+        // outside cloud
         rho = 0.0;
     } else if (D < h) {
-        // Shell: modulate with Perlin noise (Section 8)
+        // shell
         let noiseScale = 4.0 / max(h, 0.01);
+        let time = getTime();
         let n          = fbm((p + time * vec3<f32>(0.08, 0.02, 0.05) * 0.7) * noiseScale) * 2.0 - 1.0; // [-1,1]
         rho = sigmoid(D / h * 3.0 + n * 2.0);
     } else {
-        // Core: homogeneous (Section 8)
+        // core
         rho = 1.0;
     }
     return rho;
 }
-
-
-// fn cloudDensity(p: vec3<f32>) -> f32 {
-//     let time = getTime();
-
-//     let driftFast = vec3<f32>(time * 0.08, time * 0.02, time * 0.05) * vec3<f32>(10.0,10.0,10.0);
-//     let driftSlow = vec3<f32>(time * 0.03, time * 0.015, time * 0.02);
-
-//     let D = -distToCloudSurface(p);
-//     let h = max(cloudMesh.shellThickness, 0.01);
-
-//     if (D > 0.0) {
-//         return 0.0;
-//     }
-
-//     let depth = -D;
-//     let edge = clamp(depth / h, 0.0, 1.0);
-
-//     let macroPerlin = clamp(0.5 + fbm(p * 0.18 + driftFast) * 1.35, 0.0, 1.0);
-//     let macroWorley = 1.0 - worleyFbm(p * 0.2 + driftFast * 0.6);
-//     let billow = clamp(mix(macroPerlin, macroWorley, 0.5), 0.0, 1.0);
-
-//     let shellPerlin = fbm(p * (4.0 / h) + driftFast) * 2.0 - 1.0;
-//     let shellWorley = 1.0 - worleyFbm(p * (1.7 / h) + driftFast * 0.8);
-
-//     var rho = 0.0;
-
-//     if (depth < h) {
-//         let shellNoise = shellPerlin * 0.85 + shellWorley * 0.75;
-//         rho = sigmoid(edge * 3.0 + shellNoise * 1.25);
-//     } else {
-//         // Avoid a fully saturated core; keep some cellular variation inside.
-//         rho = 0.65 + billow * 0.35;
-//     }
-
-//     // Erode mostly near the boundary, preserving the core.
-//     let erosion = (1.0 - shellWorley) * (1.0 - edge) * 0.35;
-//     rho = max(rho - erosion, 0.0);
-
-//     let breathe = 0.85 + 0.15 * sin(time * 0.30);
-//     rho *= mix(0.75, 1.25, billow) * breathe;
-
-//     return clamp(rho, 0.0, 1.0);
-// }
 
 fn extinction(p: vec3<f32>) -> f32 {
     return EXTINCTION_FACTOR * cloudDensity(p) * settings.scale;
@@ -641,7 +513,7 @@ fn shadowOpticalDepth(p: vec3<f32>, wL: vec3<f32>) -> f32 {
 }
 
 // ---------------------------------------------------------------------------
-//  Slab geometry (paper §7 — depth d from lit side, slab thickness t)
+//  Slab geometry
 // ---------------------------------------------------------------------------
 
 fn slabGeometry(p: vec3<f32>, wL: vec3<f32>) -> vec4<f32> {
@@ -661,7 +533,7 @@ fn slabGeometry(p: vec3<f32>, wL: vec3<f32>) -> vec4<f32> {
 }
 
 // ---------------------------------------------------------------------------
-//  Canonical Transport Function — table sampling and analytic form (§5)
+//  Canonical Transport Function
 // ---------------------------------------------------------------------------
 
 fn orderSetInfo(setIdx: u32) -> OrderSetInfo {
@@ -686,8 +558,7 @@ fn clampTableIdx(tableIdx: u32) -> u32 {
     return min(tableIdx, HO_ORDER_COUNT - 1u);
 }
 
-// Tables encode order bins {1, 2, 3, 4-5, 6-8, 9-14, 15+}.
-// MS skips order 1 (single scattering), so set 0 → table 1.
+// Tables order 1, 2, 3, 4-5, 6-8, 9-14, 15+
 fn setToTableIdx(setIdx: u32) -> u32 {
     return clampTableIdx(setIdx + 1u);
 }
@@ -781,7 +652,7 @@ fn canonicalT(V: f32, L: f32, cosTheta: f32, d: f32, t: f32, setIdx: u32) -> f32
 }
 
 // ---------------------------------------------------------------------------
-//  Collector centre & size, iterative collector finding (§5.2 / §6.1)
+//  Collector algorithm
 // ---------------------------------------------------------------------------
 
 fn canonicalCollector(V: f32, L: f32, psiV: f32, d: f32, t: f32, setIdx: u32) -> Collector {
@@ -891,7 +762,7 @@ fn findCollector(p: vec3<f32>, wV: vec3<f32>, wL: vec3<f32>, setIdx: u32) -> Col
 }
 
 // ---------------------------------------------------------------------------
-//  Lit-surface radiance and scattering integrators
+//  Radiance and scattering
 // ---------------------------------------------------------------------------
 
 fn litSurfaceRadiance(cPos: vec3<f32>, wL: vec3<f32>) -> vec3<f32> {
@@ -988,7 +859,7 @@ fn tonemap(c: vec3<f32>) -> vec3<f32> {
 }
 
 // ---------------------------------------------------------------------------
-//  Camera ray
+//  Camera
 // ---------------------------------------------------------------------------
 
 fn cameraRay(pixel: vec2<f32>, dims: vec2<f32>, seed: ptr<function, u32>) -> Ray {
@@ -1027,7 +898,7 @@ fn cameraRay(pixel: vec2<f32>, dims: vec2<f32>, seed: ptr<function, u32>) -> Ray
 }
 
 // ---------------------------------------------------------------------------
-//  Main pixel render and entry point
+//  Main
 // ---------------------------------------------------------------------------
 
 fn renderPixel(pixelCoord: vec2<f32>, dims: vec2<f32>, seed: ptr<function, u32>) -> vec3<f32> {
